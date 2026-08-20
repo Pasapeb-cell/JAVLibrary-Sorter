@@ -21,6 +21,22 @@ that metadata — with Kodi/Jellyfin/Plex-compatible `.nfo` files and cover art.
    containing a **symlink** back to the canonical file, so a video with several
    actresses or genres appears under all of them without duplicating data.
 
+## Genre blocklist
+
+r18.dev mixes promotional and technical tags in with real genres — left alone you get
+folders like `Sample Video`, `JET Video 40% Off Sale`, and
+`Prestige Group Autumn Planning Festival` sitting next to the genres you actually
+browse by. A built-in blocklist drops these, by exact name and by shape (anything
+matching `40% off`, `sale`, `campaign`, `festival`, …).
+
+Blocked tags are kept out of **both** the category folders and the NFO — a sale banner
+is no more a genre in Jellyfin than it is on disk.
+
+Edit it via **Blocked genres…** in the app. Your own additions are stored separately
+from the built-in list, so future improvements to the built-in list still reach you.
+The cache stores unfiltered metadata and the filter runs on read, so changing the
+blocklist applies immediately — no need to clear the cache or re-scan.
+
 ## Requirements
 
 - Windows

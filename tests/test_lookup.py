@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.id_extractor import extract_id
 from javsorter.core.models import MetadataRecord
 from javsorter.scraping.cache import MetadataCache
@@ -88,6 +89,51 @@ def test_lookup_negative_cache_avoids_refetch(requests_mock, cache, client):
         lookup_metadata(cache, client, "ZZZZ-999")
 
     assert matcher.call_count == 1
+
+
+def test_lookup_applies_genre_filter(requests_mock, cache, client):
+    payload = json.loads((FIXTURES / "ssis-001.json").read_text(encoding="utf-8"))
+    requests_mock.get(
+        "https://r18.dev/videos/vod/movies/detail/-/dvd_id=SSIS-001/json",
+        json=payload,
+    )
+
+    unfiltered = lookup_metadata(cache, client, "SSIS-001")
+    assert "Sample Video" in unfiltered.genres or "Hi-Def" in unfiltered.genres
+
+    filtered = lookup_metadata(cache, client, "SSIS-001", genre_filter=GenreFilter())
+
+    assert "Hi-Def" not in filtered.genres
+    assert "Exclusive Distribution" not in filtered.genres
+    assert "Cheating Wife" in filtered.genres
+
+
+def test_cache_stores_unfiltered_so_blocklist_changes_apply_immediately(
+    requests_mock, cache, client
+):
+    """The blocklist must be changeable without clearing the cache, which
+    means the cached record has to keep every genre and the filter has to
+    run on the way out.
+    """
+    payload = json.loads((FIXTURES / "ssis-001.json").read_text(encoding="utf-8"))
+    requests_mock.get(
+        "https://r18.dev/videos/vod/movies/detail/-/dvd_id=SSIS-001/json",
+        json=payload,
+    )
+
+    narrow = lookup_metadata(cache, client, "SSIS-001", genre_filter=GenreFilter())
+    assert "Drama" in narrow.genres
+
+    # Now block "Drama" too -- served from cache, must reflect the change.
+    wider = lookup_metadata(
+        cache, client, "SSIS-001", genre_filter=GenreFilter(extra_blocked=["Drama"])
+    )
+    assert "Drama" not in wider.genres
+
+    # And relaxing the blocklist restores genres a cached-filtered record
+    # would have lost for good.
+    relaxed = lookup_metadata(cache, client, "SSIS-001", genre_filter=GenreFilter(use_defaults=False))
+    assert "Hi-Def" in relaxed.genres
 
 
 def test_lookup_prefers_cache_over_network(requests_mock, cache, client):

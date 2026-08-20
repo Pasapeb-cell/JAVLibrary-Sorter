@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.models import MetadataRecord
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
@@ -35,11 +36,13 @@ class MatchReviewDialog(QDialog):
         guessed_id: str | None,
         cache: MetadataCache,
         client: ScraperClient,
+        genre_filter: GenreFilter | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Resolve match")
         self._cache = cache
         self._client = client
+        self._genre_filter = genre_filter
         self.result_record: MetadataRecord | None = None
         self.result_content_id: str | None = None
 
@@ -61,7 +64,9 @@ class MatchReviewDialog(QDialog):
             return
 
         try:
-            record = lookup_metadata(self._cache, self._client, content_id)
+            record = lookup_metadata(
+                self._cache, self._client, content_id, genre_filter=self._genre_filter
+            )
         except NoMatchError:
             QMessageBox.warning(self, "No match", f"No metadata found for {content_id} on r18.dev.")
             return

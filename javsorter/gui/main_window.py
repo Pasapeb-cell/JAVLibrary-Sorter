@@ -20,10 +20,13 @@ from javsorter.core.models import MatchStatus
 from javsorter.gui.scan_table import ScanTableModel
 from javsorter.gui.settings_panel import SettingsPanel
 from javsorter.gui.widgets.dev_mode_dialog import show_symlink_permission_dialog
+from javsorter.gui.widgets.genre_blocklist_dialog import GenreBlocklistDialog
 from javsorter.gui.widgets.match_review_dialog import MatchReviewDialog
 from javsorter.gui.workers import ExecuteWorker, MatchWorker, ScanWorker
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
+from javsorter.scraping.exceptions import ScrapeError
+from javsorter.scraping.lookup import lookup_for_item
 
 
 class MainWindow(QMainWindow):
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
 
         self.settings_panel.scan_button.clicked.connect(self._start_scan)
         self.settings_panel.run_button.clicked.connect(self._start_run)
+        self.settings_panel.blocked_genres_button.clicked.connect(self._edit_blocked_genres)
         self.table_view.doubleClicked.connect(self._on_row_double_clicked)
 
         self._apply_settings()
@@ -84,6 +88,43 @@ class MainWindow(QMainWindow):
         self._settings.sort_in_place = self.settings_panel.sort_in_place()
         self._settings.enabled_categories = self.settings_panel.enabled_categories()
         self._settings.save(self._settings_path)
+
+    def _edit_blocked_genres(self) -> None:
+        dialog = GenreBlocklistDialog(
+            self, self._settings.use_default_genre_blocklist, self._settings.extra_blocked_genres
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        self._settings.use_default_genre_blocklist = dialog.use_defaults()
+        self._settings.extra_blocked_genres = dialog.extra_blocked()
+        self._settings.save(self._settings_path)
+        self._reapply_genre_filter()
+
+    def _reapply_genre_filter(self) -> None:
+        """Re-resolve already-matched rows against the new blocklist.
+
+        Runs entirely off the cache (which stores unfiltered records), so
+        this is instant and makes no network requests -- and it can widen
+        the genre list again, which re-filtering the in-memory records
+        could not.
+        """
+        if not self._matched_records:
+            return
+
+        genre_filter = self._settings.genre_filter()
+        for row, _record in list(self._matched_records.items()):
+            item = self._model.item_at(row)
+            try:
+                refreshed = lookup_for_item(
+                    self._cache, self._client, item.extracted, genre_filter=genre_filter
+                )
+            except ScrapeError:
+                continue
+            item.metadata = refreshed
+            self._matched_records[row] = refreshed
+            self._model.update_row(row)
+        self._log("Applied the updated genre blocklist to matched items.")
 
     def _start_scan(self) -> None:
         source = self.settings_panel.source_edit.text().strip()
@@ -109,7 +150,9 @@ class MainWindow(QMainWindow):
         self._model.set_items(items)
         self._log(f"Found {len(items)} item(s). Looking up metadata...")
 
-        self._match_worker = MatchWorker(items, self._cache, self._client)
+        self._match_worker = MatchWorker(
+            items, self._cache, self._client, genre_filter=self._settings.genre_filter()
+        )
         self._match_worker.item_matched.connect(self._on_item_matched)
         self._match_worker.item_failed.connect(self._on_item_failed)
         self._match_worker.progress.connect(self._on_progress)
@@ -147,7 +190,12 @@ class MainWindow(QMainWindow):
             return
 
         dialog = MatchReviewDialog(
-            self, item.primary_path.name, item.extracted.content_id, self._cache, self._client
+            self,
+            item.primary_path.name,
+            item.extracted.content_id,
+            self._cache,
+            self._client,
+            genre_filter=self._settings.genre_filter(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_record is not None:
             item.status = MatchStatus.MATCHED

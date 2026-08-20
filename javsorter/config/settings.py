@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from javsorter.core.genre_filter import GenreFilter
 from javsorter.organize.category_builder import ALL_CATEGORIES
 
 
@@ -14,6 +15,17 @@ class Settings:
     sort_in_place: bool = False
     enabled_categories: list[str] = field(default_factory=lambda: list(ALL_CATEGORIES))
     dev_mode_dialog_acknowledged: bool = False
+    # Kept as "use defaults + your additions" rather than one baked-in
+    # list, so improvements to the built-in blocklist reach users who
+    # already have a saved settings file.
+    use_default_genre_blocklist: bool = True
+    extra_blocked_genres: list[str] = field(default_factory=list)
+
+    def genre_filter(self) -> GenreFilter:
+        return GenreFilter(
+            use_defaults=self.use_default_genre_blocklist,
+            extra_blocked=self.extra_blocked_genres,
+        )
 
     @classmethod
     def load(cls, path: Path) -> "Settings":

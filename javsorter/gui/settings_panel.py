@@ -28,6 +28,7 @@ class SettingsPanel(QWidget):
         self.category_checkboxes = {name: QCheckBox(name) for name in ALL_CATEGORIES}
         for checkbox in self.category_checkboxes.values():
             checkbox.setChecked(True)
+        self.blocked_genres_button = QPushButton("Blocked genres...")
         self.scan_button = QPushButton("Scan")
         self.run_button = QPushButton("Run")
         self.run_button.setEnabled(False)
@@ -46,6 +47,8 @@ class SettingsPanel(QWidget):
         category_layout = QHBoxLayout(category_box)
         for checkbox in self.category_checkboxes.values():
             category_layout.addWidget(checkbox)
+        category_layout.addStretch()
+        category_layout.addWidget(self.blocked_genres_button)
         layout.addWidget(category_box)
 
         button_row = QHBoxLayout()

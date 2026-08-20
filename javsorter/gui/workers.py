@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.models import MatchStatus, ScanItem
 from javsorter.core.scanner import scan_folder
 from javsorter.organize.pipeline import process_item
@@ -40,11 +41,18 @@ class MatchWorker(QThread):
     progress = Signal(int, int)  # done, total
     finished_matching = Signal()
 
-    def __init__(self, items: list[ScanItem], cache: MetadataCache, client: ScraperClient):
+    def __init__(
+        self,
+        items: list[ScanItem],
+        cache: MetadataCache,
+        client: ScraperClient,
+        genre_filter: GenreFilter | None = None,
+    ):
         super().__init__()
         self._items = items
         self._cache = cache
         self._client = client
+        self._genre_filter = genre_filter
 
     def run(self) -> None:
         lookupable = [
@@ -55,7 +63,9 @@ class MatchWorker(QThread):
         total = len(lookupable)
         for done, (index, item) in enumerate(lookupable, start=1):
             try:
-                record = lookup_for_item(self._cache, self._client, item.extracted)
+                record = lookup_for_item(
+                    self._cache, self._client, item.extracted, genre_filter=self._genre_filter
+                )
                 self.item_matched.emit(index, record)
             except NoMatchError:
                 self.item_failed.emit(index, "No match found on r18.dev")
