@@ -14,8 +14,7 @@ from javsorter.core.models import MetadataRecord
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import NetworkError, NoMatchError
-from javsorter.scraping.parser import parse_detail
-from javsorter.scraping.r18 import fetch_by_dvd_id
+from javsorter.scraping.lookup import lookup_metadata
 
 
 class MatchReviewDialog(QDialog):
@@ -62,15 +61,8 @@ class MatchReviewDialog(QDialog):
             return
 
         try:
-            record = self._cache.get(content_id)
-            if record is None:
-                if self._cache.has_not_found(content_id):
-                    raise NoMatchError(content_id)
-                data = fetch_by_dvd_id(self._client, content_id)
-                record = parse_detail(data, requested_id=content_id)
-                self._cache.put(content_id, record)
+            record = lookup_metadata(self._cache, self._client, content_id)
         except NoMatchError:
-            self._cache.put_not_found(content_id)
             QMessageBox.warning(self, "No match", f"No metadata found for {content_id} on r18.dev.")
             return
         except NetworkError as exc:

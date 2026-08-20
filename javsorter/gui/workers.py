@@ -10,8 +10,7 @@ from javsorter.organize.pipeline import process_item
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import NetworkError, NoMatchError
-from javsorter.scraping.parser import parse_detail
-from javsorter.scraping.r18 import fetch_by_dvd_id
+from javsorter.scraping.lookup import lookup_for_item
 
 
 class ScanWorker(QThread):
@@ -55,18 +54,10 @@ class MatchWorker(QThread):
         ]
         total = len(lookupable)
         for done, (index, item) in enumerate(lookupable, start=1):
-            content_id = item.extracted.content_id
             try:
-                record = self._cache.get(content_id)
-                if record is None:
-                    if self._cache.has_not_found(content_id):
-                        raise NoMatchError(content_id)
-                    data = fetch_by_dvd_id(self._client, content_id)
-                    record = parse_detail(data, requested_id=content_id)
-                    self._cache.put(content_id, record)
+                record = lookup_for_item(self._cache, self._client, item.extracted)
                 self.item_matched.emit(index, record)
             except NoMatchError:
-                self._cache.put_not_found(content_id)
                 self.item_failed.emit(index, "No match found on r18.dev")
             except NetworkError as exc:
                 self.item_failed.emit(index, str(exc))
