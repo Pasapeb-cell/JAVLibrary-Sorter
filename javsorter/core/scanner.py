@@ -21,8 +21,16 @@ def find_video_files(
         if should_cancel is not None and should_cancel():
             break
         for name in names:
-            if Path(name).suffix.lower() in VIDEO_EXTENSIONS:
-                files.append(Path(root) / name)
+            path = Path(root) / name
+            if path.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            # Never treat a symlink as a file to organize. The category
+            # folders are full of them, and if the library sits inside the
+            # source folder a rescan would otherwise pick one up as the
+            # "real" file and orphan the actual video.
+            if path.is_symlink():
+                continue
+            files.append(path)
     return files
 
 

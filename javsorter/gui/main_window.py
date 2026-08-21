@@ -27,6 +27,7 @@ from javsorter.logging_setup import (
     get_logger,
 )
 from javsorter.organize import journal as journal_module
+from javsorter.organize.plan import format_plan, plan_item
 from javsorter.gui.scan_table import ScanTableModel
 from javsorter.gui.settings_panel import SettingsPanel
 from javsorter.gui.widgets.dev_mode_dialog import show_symlink_permission_dialog
@@ -373,6 +374,10 @@ class MainWindow(QMainWindow):
         sort_in_place = self.settings_panel.sort_in_place()
         enabled_categories = self.settings_panel.enabled_categories()
 
+        if self.settings_panel.dry_run_checkbox.isChecked():
+            self._preview_run(matched, Path(library), sort_in_place, enabled_categories)
+            return
+
         self._set_busy(True)
         self._dev_mode_dialog_shown_this_run = False
         self._log(f"Processing {len(matched)} item(s)...")
@@ -391,6 +396,25 @@ class MainWindow(QMainWindow):
         self._execute_worker.progress.connect(self._on_progress)
         self._execute_worker.finished_run.connect(self._on_run_finished)
         self._execute_worker.start()
+
+    def _preview_run(self, matched, library_root: Path, sort_in_place: bool, categories) -> None:
+        """Log exactly what Run would do, touching nothing."""
+        self._log(f"--- DRY RUN: previewing {len(matched)} item(s), nothing will be changed ---")
+
+        total_moves = total_links = total_warnings = 0
+        for _index, item, record in matched:
+            item_plan = plan_item(item, record, library_root, sort_in_place, categories)
+            for line in format_plan(item_plan):
+                self._log(line)
+            total_moves += len(item_plan.renames)
+            total_links += len(item_plan.link_paths)
+            total_warnings += len(item_plan.warnings)
+
+        self._log(
+            f"--- DRY RUN complete: would move/rename {total_moves} file(s), "
+            f"create {total_links} link(s), with {total_warnings} warning(s). "
+            "Nothing was changed. ---"
+        )
 
     def _on_item_done(self, index: int, result) -> None:
         skipped = result.skipped_links

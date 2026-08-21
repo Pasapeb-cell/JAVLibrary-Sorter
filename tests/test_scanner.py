@@ -1,3 +1,5 @@
+import pytest
+
 from javsorter.core.models import MatchStatus
 from javsorter.core.scanner import scan_folder
 
@@ -101,6 +103,40 @@ def test_scan_multi_part_release_is_not_treated_as_duplicates(tmp_path):
 
 def test_scan_recurses_into_subfolders(tmp_path):
     _touch(tmp_path / "sub" / "ABC-123.mp4")
+
+    items = scan_folder(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].extracted.content_id == "ABC-123"
+
+
+def test_scan_ignores_symlinks(tmp_path):
+    """Regression: with the library inside the source folder, a re-scan
+    used to pick up the app's own category symlinks. Because a symlink
+    reports its target's size, the "largest duplicate" tie-break could
+    select the symlink as the file to organize and orphan the real video.
+    """
+    import os
+
+    real = tmp_path / "Library" / "SSIS-001" / "SSIS-001.mp4"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"x" * 512)
+    link_dir = tmp_path / "Library" / "Actress" / "Someone"
+    link_dir.mkdir(parents=True)
+    try:
+        os.symlink(real, link_dir / "SSIS-001.mp4")
+    except OSError:
+        pytest.skip("symlink creation not permitted in this environment")
+
+    items = scan_folder(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].parts == [real]
+    assert items[0].duplicates == []
+
+
+def test_scan_handles_non_ascii_filenames(tmp_path):
+    _touch(tmp_path / "【高画質】ABC-123 中文字幕.mp4")
 
     items = scan_folder(tmp_path)
 

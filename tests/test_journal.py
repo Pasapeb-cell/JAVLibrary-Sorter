@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from javsorter.organize.journal import RunJournal, latest_journal, undo
 
 
@@ -43,6 +45,35 @@ def test_undo_restores_moved_file(tmp_path):
     assert report.files_restored == 1
     assert source.exists()
     assert not destination.exists()
+
+
+def test_undo_restores_across_volumes(tmp_path, monkeypatch):
+    """Regression: undo used os.replace, which cannot cross volumes, so a
+    library on a different drive from the source -- the usual setup --
+    failed to restore anything. Simulated here by making replace() raise
+    EXDEV the way a real cross-drive move does.
+    """
+    import os as os_module
+
+    source = _make_file(tmp_path / "source" / "ABC-123.mp4")
+    destination = tmp_path / "Library" / "ABC-123" / "ABC-123.mp4"
+    destination.parent.mkdir(parents=True)
+    source.replace(destination)
+
+    def refuse_cross_volume(*_args, **_kwargs):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(os_module, "replace", refuse_cross_volume)
+    monkeypatch.setattr(Path, "replace", refuse_cross_volume)
+
+    journal = RunJournal(library_root=str(tmp_path / "Library"))
+    journal.record_move(source, destination)
+
+    report = undo(journal)
+
+    assert report.failures == []
+    assert report.files_restored == 1
+    assert source.exists()
 
 
 def test_undo_deletes_generated_files(tmp_path):

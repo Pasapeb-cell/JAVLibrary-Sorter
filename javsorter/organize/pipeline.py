@@ -10,6 +10,7 @@ from javsorter.organize.filemover import move_file
 from javsorter.organize.journal import RunJournal
 from javsorter.organize.linker import LinkResult
 from javsorter.organize.nfo_writer import write_nfo
+from javsorter.organize.plan import destination_for
 from javsorter.scraping.client import ScraperClient
 
 
@@ -84,14 +85,6 @@ def process_item(
     return result
 
 
-def _destination_for(
-    source_path: Path,
-    content_id: str,
-    part_label: str | None,
-    library_root: Path,
-    sort_in_place: bool,
-) -> Path:
-    filename = namer.library_filename(content_id, source_path.suffix, part_label)
-    if sort_in_place:
-        return source_path.with_name(filename)
-    return namer.library_path(library_root, content_id) / filename
+# Destination logic lives in organize.plan so the dry-run preview and the
+# real run can never disagree about where a file is going.
+_destination_for = destination_for

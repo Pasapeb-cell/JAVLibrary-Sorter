@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -155,7 +156,9 @@ def _restore_move(destination: Path, source: Path, report: UndoReport) -> None:
         report.failures.append(f"{source}: something is already there, left {destination} in place")
         return
     Path(extended(source.parent)).mkdir(parents=True, exist_ok=True)
-    Path(extended(destination)).replace(extended(source))
+    # shutil.move, not Path.replace: os.replace cannot cross volumes, and a
+    # library on a different drive from the source is the common setup.
+    shutil.move(str(extended(destination)), str(extended(source)))
     report.files_restored += 1
 
 

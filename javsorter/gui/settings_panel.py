@@ -25,6 +25,11 @@ class SettingsPanel(QWidget):
         self.sort_in_place_radio = QRadioButton("Sort in place")
         self.import_radio = QRadioButton("Import into library")
         self.import_radio.setChecked(True)
+        self.dry_run_checkbox = QCheckBox("Dry run (preview only)")
+        self.dry_run_checkbox.setToolTip(
+            "Show exactly what Run would do without moving, renaming, "
+            "downloading, or linking anything."
+        )
         self.category_checkboxes = {name: QCheckBox(name) for name in ALL_CATEGORIES}
         for checkbox in self.category_checkboxes.values():
             checkbox.setChecked(True)
@@ -49,6 +54,8 @@ class SettingsPanel(QWidget):
         mode_layout = QHBoxLayout(mode_box)
         mode_layout.addWidget(self.sort_in_place_radio)
         mode_layout.addWidget(self.import_radio)
+        mode_layout.addStretch()
+        mode_layout.addWidget(self.dry_run_checkbox)
         layout.addWidget(mode_box)
 
         category_box = QGroupBox("Category folders")

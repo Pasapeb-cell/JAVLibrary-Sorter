@@ -70,6 +70,16 @@ match) can be **double-clicked** to correct the ID and look it up again.
 
 **Stop** halts a scan or run after the item in progress finishes.
 
+### Dry run — do this first
+
+Tick **Dry run (preview only)** before your first real run. Run then prints exactly what
+it *would* do — every move, rename, NFO, cover, and category link, plus warnings about
+destination collisions and duplicates — and changes nothing at all. The preview shares
+its destination logic with the real pipeline, so the two can't drift apart.
+
+Start with a copy of a handful of real files, dry-run it, read the plan, then run for
+real. And remember **Undo last run** exists if a real run goes somewhere unexpected.
+
 ### Undoing a run
 
 Every run is journalled, so **Undo last run** reverses it: category links are removed,
