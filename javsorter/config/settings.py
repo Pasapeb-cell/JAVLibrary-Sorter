@@ -5,14 +5,20 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from javsorter.core.genre_filter import GenreFilter
-from javsorter.organize.category_builder import ALL_CATEGORIES
+from javsorter.organize.category_builder import ALL_CATEGORIES, CATEGORY_GENRE
+from javsorter.organize.options import TAG_FOLDERS
 
 
 @dataclass
 class Settings:
     last_source_folder: str = ""
     last_library_folder: str = ""
-    sort_in_place: bool = False
+    # Build the organised folders inside the source folder rather than a
+    # separate destination (replaces the old sort_in_place flag).
+    organise_in_source: bool = False
+    layout: str = TAG_FOLDERS
+    sort_by: str = CATEGORY_GENRE
+    link_only: bool = False
     enabled_categories: list[str] = field(default_factory=lambda: list(ALL_CATEGORIES))
     dev_mode_dialog_acknowledged: bool = False
     # Kept as "use defaults + your additions" rather than one baked-in

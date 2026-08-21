@@ -27,6 +27,7 @@ from javsorter.logging_setup import (
     get_logger,
 )
 from javsorter.organize import journal as journal_module
+from javsorter.organize.options import LIBRARY_LINKS, TAG_FOLDERS
 from javsorter.organize.plan import format_plan, plan_item
 from javsorter.gui.scan_table import ScanTableModel
 from javsorter.gui.settings_panel import SettingsPanel
@@ -112,20 +113,31 @@ class MainWindow(QMainWindow):
         self.log_view.appendPlainText(message)
 
     def _apply_settings(self) -> None:
-        self.settings_panel.source_edit.setText(self._settings.last_source_folder)
-        self.settings_panel.library_edit.setText(self._settings.last_library_folder)
-        if self._settings.sort_in_place:
-            self.settings_panel.sort_in_place_radio.setChecked(True)
+        panel = self.settings_panel
+        panel.source_edit.setText(self._settings.last_source_folder)
+        panel.destination_edit.setText(self._settings.last_library_folder)
+        if self._settings.organise_in_source:
+            panel.in_source_radio.setChecked(True)
         else:
-            self.settings_panel.import_radio.setChecked(True)
-        for name, checkbox in self.settings_panel.category_checkboxes.items():
+            panel.into_folder_radio.setChecked(True)
+        if self._settings.layout == TAG_FOLDERS:
+            panel.tag_layout_radio.setChecked(True)
+        else:
+            panel.links_layout_radio.setChecked(True)
+        panel.sort_by_combo.setCurrentText(self._settings.sort_by)
+        panel.link_only_checkbox.setChecked(self._settings.link_only)
+        for name, checkbox in panel.category_checkboxes.items():
             checkbox.setChecked(name in self._settings.enabled_categories)
 
     def _save_settings(self) -> None:
-        self._settings.last_source_folder = self.settings_panel.source_edit.text().strip()
-        self._settings.last_library_folder = self.settings_panel.library_edit.text().strip()
-        self._settings.sort_in_place = self.settings_panel.sort_in_place()
-        self._settings.enabled_categories = self.settings_panel.enabled_categories()
+        panel = self.settings_panel
+        self._settings.last_source_folder = panel.source_edit.text().strip()
+        self._settings.last_library_folder = panel.destination_edit.text().strip()
+        self._settings.organise_in_source = panel.organises_in_source()
+        self._settings.layout = TAG_FOLDERS if panel.tag_layout_radio.isChecked() else LIBRARY_LINKS
+        self._settings.sort_by = panel.sort_by_combo.currentText()
+        self._settings.link_only = panel.link_only_checkbox.isChecked()
+        self._settings.enabled_categories = panel.enabled_categories()
         self._settings.save(self._settings_path)
 
     def _active_worker(self):
@@ -140,11 +152,11 @@ class MainWindow(QMainWindow):
         return None
 
     def _start_rescan(self) -> None:
-        library = self.settings_panel.library_edit.text().strip()
-        if not library:
-            QMessageBox.warning(self, "Missing folder", "Choose a library folder first.")
+        library = self.settings_panel.root_folder()
+        if library is None:
+            QMessageBox.warning(self, "Missing folder", "Choose the library folder first.")
             return
-        if not Path(library).exists():
+        if not library.exists():
             QMessageBox.warning(self, "No such folder", f"{library} doesn't exist.")
             return
 
@@ -153,7 +165,7 @@ class MainWindow(QMainWindow):
         self._log(f"Rescanning {library}...")
 
         self._rescan_worker = RescanWorker(
-            Path(library),
+            library,
             self.settings_panel.enabled_categories(),
             self._cache,
             self._client,
@@ -363,19 +375,19 @@ class MainWindow(QMainWindow):
             self._log(f"Manually resolved {dialog.result_content_id}.")
 
     def _start_run(self) -> None:
-        library = self.settings_panel.library_edit.text().strip()
-        if not library:
-            QMessageBox.warning(self, "Missing folder", "Choose a library folder first.")
+        options = self.settings_panel.organize_options()
+        if options is None:
+            QMessageBox.warning(
+                self, "Missing folder", "Choose the folder to organise into first."
+            )
             return
 
         matched = [
             (index, self._model.item_at(index), record) for index, record in self._matched_records.items()
         ]
-        sort_in_place = self.settings_panel.sort_in_place()
-        enabled_categories = self.settings_panel.enabled_categories()
 
         if self.settings_panel.dry_run_checkbox.isChecked():
-            self._preview_run(matched, Path(library), sort_in_place, enabled_categories)
+            self._preview_run(matched, options)
             return
 
         self._set_busy(True)
@@ -384,12 +396,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
 
         self._execute_worker = ExecuteWorker(
-            matched,
-            Path(library),
-            sort_in_place,
-            enabled_categories,
-            self._client,
-            runs_dir=self._runs_dir,
+            matched, options, self._client, runs_dir=self._runs_dir
         )
         self._execute_worker.item_done.connect(self._on_item_done)
         self._execute_worker.item_error.connect(self._on_item_error)
@@ -397,13 +404,13 @@ class MainWindow(QMainWindow):
         self._execute_worker.finished_run.connect(self._on_run_finished)
         self._execute_worker.start()
 
-    def _preview_run(self, matched, library_root: Path, sort_in_place: bool, categories) -> None:
+    def _preview_run(self, matched, options) -> None:
         """Log exactly what Run would do, touching nothing."""
         self._log(f"--- DRY RUN: previewing {len(matched)} item(s), nothing will be changed ---")
 
         total_moves = total_links = total_warnings = 0
         for _index, item, record in matched:
-            item_plan = plan_item(item, record, library_root, sort_in_place, categories)
+            item_plan = plan_item(item, record, options)
             for line in format_plan(item_plan):
                 self._log(line)
             total_moves += len(item_plan.renames)

@@ -14,6 +14,7 @@ import requests
 from javsorter.core.models import MatchStatus, MetadataRecord
 from javsorter.core.scanner import scan_folder
 from javsorter.gui.workers import ExecuteWorker, MatchWorker, ScanWorker
+from javsorter.organize.options import LIBRARY_LINKS, OrganizeOptions
 from javsorter.organize.pipeline import ProcessResult
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
@@ -192,7 +193,7 @@ def _matched_entry(tmp_path, content_id="ABC-123"):
 
 def test_execute_worker_processes_items(qtbot, tmp_path, client):
     matched = _matched_entry(tmp_path)
-    worker = ExecuteWorker(matched, tmp_path / "Library", False, ["Actress"], client)
+    worker = ExecuteWorker(matched, OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS, enabled_categories=["Actress"]), client)
     done = []
     worker.item_done.connect(lambda i, r: done.append(r))
 
@@ -210,7 +211,7 @@ def test_execute_worker_reports_error_and_still_finishes(qtbot, tmp_path, client
         "javsorter.gui.workers.process_item",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("disk on fire")),
     )
-    worker = ExecuteWorker(matched, tmp_path / "Library", False, [], client)
+    worker = ExecuteWorker(matched, OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS), client)
     errors = []
     worker.item_error.connect(lambda i, msg: errors.append(msg))
 
@@ -232,7 +233,7 @@ def _two_matched_entries(tmp_path):
 
 
 def test_execute_worker_cancelled_before_start_processes_nothing(qtbot, tmp_path, client):
-    worker = ExecuteWorker(_two_matched_entries(tmp_path), tmp_path / "Library", False, [], client)
+    worker = ExecuteWorker(_two_matched_entries(tmp_path), OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS), client)
     done = []
     worker.item_done.connect(lambda i, r: done.append(r))
 
@@ -251,7 +252,7 @@ def test_execute_worker_cancel_mid_run_skips_remaining(qtbot, tmp_path, client, 
     signal handler instead would race the main thread's event loop.)
     """
     matched = _two_matched_entries(tmp_path)
-    worker = ExecuteWorker(matched, tmp_path / "Library", False, [], client)
+    worker = ExecuteWorker(matched, OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS), client)
 
     calls = []
 

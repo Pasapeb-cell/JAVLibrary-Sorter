@@ -5,7 +5,7 @@ def test_load_missing_file_returns_defaults(tmp_path):
     settings = Settings.load(tmp_path / "settings.json")
 
     assert settings.last_source_folder == ""
-    assert settings.sort_in_place is False
+    assert settings.organise_in_source is False
     assert "Actress" in settings.enabled_categories
 
 
@@ -14,7 +14,7 @@ def test_save_and_load_roundtrip(tmp_path):
     original = Settings(
         last_source_folder="C:/videos",
         last_library_folder="C:/library",
-        sort_in_place=True,
+        organise_in_source=True,
         enabled_categories=["Actress", "Studio"],
         dev_mode_dialog_acknowledged=True,
     )

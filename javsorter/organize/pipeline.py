@@ -10,6 +10,7 @@ from javsorter.organize.filemover import move_file
 from javsorter.organize.journal import RunJournal
 from javsorter.organize.linker import LinkResult
 from javsorter.organize.nfo_writer import write_nfo
+from javsorter.organize.options import OrganizeOptions
 from javsorter.organize.plan import destination_for
 from javsorter.scraping.client import ScraperClient
 
@@ -30,15 +31,15 @@ class ProcessResult:
 def process_item(
     item: ScanItem,
     record: MetadataRecord,
-    library_root: Path,
-    sort_in_place: bool,
-    enabled_categories: list[str],
+    options: OrganizeOptions,
     client: ScraperClient,
     journal: RunJournal | None = None,
 ) -> ProcessResult:
-    """Move/rename the file(s), write NFO + cover, and fan out category
-    symlinks for one matched ScanItem. Both sort-in-place and import modes
-    converge here once the canonical path is decided.
+    """Move/rename the file(s) and write the NFO + cover for one release.
+
+    In tag-folder layout the file lands in the single folder for its tag.
+    In library layout it gets its own release folder and symlinks fan out
+    across the enabled categories.
 
     Every reversible action is recorded in `journal` (when given) so the
     whole run can be undone later.
@@ -47,9 +48,7 @@ def process_item(
 
     canonical_paths = []
     for source_path, part_label in zip(item.parts, item.part_labels):
-        destination = _destination_for(
-            source_path, record.content_id, part_label, library_root, sort_in_place
-        )
+        destination = destination_for(source_path, record, part_label, options)
         moved_to = move_file(source_path, destination)
         canonical_paths.append(moved_to)
         if journal is not None:
@@ -72,19 +71,21 @@ def process_item(
         if journal is not None and result.cover_downloaded and not cover_existed:
             journal.record_created_file(cover_path)
 
-    for canonical_path in canonical_paths:
-        links = category_builder.build_category_links(
-            library_root, canonical_path, record, enabled_categories
-        )
-        result.link_results.update(links)
-        if journal is not None:
-            for link_path, link_result in links.items():
-                if link_result.success:
-                    journal.record_created_link(Path(link_path))
+    # Tag-folder layout is the whole point of not having links: the file
+    # lives in exactly one place.
+    if not options.is_tag_folders:
+        for canonical_path in canonical_paths:
+            links = category_builder.build_category_links(
+                options.root, canonical_path, record, options.enabled_categories
+            )
+            result.link_results.update(links)
+            if journal is not None:
+                for link_path, link_result in links.items():
+                    if link_result.success:
+                        journal.record_created_link(Path(link_path))
 
     return result
 
 
 # Destination logic lives in organize.plan so the dry-run preview and the
 # real run can never disagree about where a file is going.
-_destination_for = destination_for

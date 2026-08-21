@@ -13,13 +13,50 @@ that metadata — with Kodi/Jellyfin/Plex-compatible `.nfo` files and cover art.
 3. **Looks up metadata** (title, actresses, genres, studio, release date, cover art)
    from [r18.dev](https://r18.dev)'s JSON API, with a local SQLite cache so repeat
    scans don't re-fetch.
-4. **Organizes** the file, in one of two modes:
-   - **Sort in place** — the file stays in its folder but is renamed to its clean ID.
-   - **Import into library** — the file is moved and renamed into `Library/<ID>/`.
+4. **Moves** the file into its folder and renames it to the clean ID.
 5. **Writes an `.nfo`** and downloads cover art alongside the video.
-6. **Builds category folders** — `Actress/`, `Genre/`, `Studio/`, `Year/` — each
-   containing a **symlink** back to the canonical file, so a video with several
-   actresses or genres appears under all of them without duplicating data.
+
+## Layouts
+
+Two independent choices: **where** the organised folders are built, and **how** they're
+shaped.
+
+**Where** — either *in the source folder* (it reorganises itself in place, and no second
+folder is asked for) or *into a folder you pick*.
+
+**How:**
+
+### Tag folders (default)
+
+Each video moves into exactly one folder, chosen by a single tag — Genre, Actress,
+Studio, or Year:
+
+```
+Sorted/
+  Beautiful Tits/  SSIS-001.mp4   SSIS-001.nfo   SSIS-001-thumb.jpg
+  Nurse/           MIDV-751-C.mp4 MIDV-751-C.nfo MIDV-751-C-thumb.jpg
+```
+
+Releases carry several genres and sometimes several actresses. The **first** one listed
+in the metadata decides the folder, so a run needs no attention. Anything with no value
+for the chosen tag goes to `Unknown/`. No symlinks are involved, so Developer Mode isn't
+needed for this layout.
+
+### Release folders + shortcuts
+
+The alternative: one real copy per release, plus a **symlink** in every matching
+`Actress/`, `Genre/`, `Studio/`, and `Year/` folder, so a video with several actresses
+appears under all of them without duplicating data.
+
+```
+Library/
+  SSIS-001/          SSIS-001.mp4  SSIS-001.nfo  SSIS-001-thumb.jpg
+  Actress/Tsukasa Aoi/     SSIS-001.mp4 -> ../../SSIS-001/SSIS-001.mp4
+  Genre/Cheating Wife/     SSIS-001.mp4 -> ../../SSIS-001/SSIS-001.mp4
+```
+
+Ticking *leave videos where they are* keeps each video at its current path and creates
+only the shortcuts. This layout needs Developer Mode (see below).
 
 ## Genre blocklist
 
@@ -41,12 +78,12 @@ blocklist applies immediately — no need to clear the cache or re-scan.
 
 - Windows
 - Python 3.11+
-- **Developer Mode or Administrator** — Windows only permits creating symlinks with
-  elevated privileges or Developer Mode enabled
+- **Developer Mode or Administrator — only for the shortcuts layout.** Windows permits
+  creating symlinks only with elevated privileges or Developer Mode enabled
   (Settings → Privacy & security → For developers → Developer Mode).
   Without it, files are still sorted, renamed, and given an NFO + cover, but the
-  category-folder links are skipped and reported — the app never silently substitutes
-  a copy or hardlink.
+  shortcut folders are skipped and reported — the app never silently substitutes a copy
+  or hardlink. The default tag-folder layout doesn't use symlinks at all.
 
 ## Setup
 
@@ -61,9 +98,9 @@ python -m venv .venv
 .venv\Scripts\python -m javsorter
 ```
 
-Point **Source folder** at your unsorted videos, **Library folder** at where the
-organized library should live, pick a sort mode and which category folders to build,
-then **Scan** → review the table → **Run**.
+Point **Source folder** at your unsorted videos, choose where to organise (in the source
+folder, or into a folder you pick), choose the layout and the tag to sort by, then
+**Scan** → review the table → **Run**.
 
 Rows that don't resolve automatically (no ID parsed, an ambiguous `-C` marker, or no
 match) can be **double-clicked** to correct the ID and look it up again.
@@ -106,8 +143,8 @@ so a long run is still auditable after the window is closed.
 
 ## Rescanning an existing library
 
-**Rescan library** brings an already-sorted library back in line with your current
-settings and metadata. It:
+**Rescan library** applies to the *shortcuts* layout, and brings an already-sorted
+library back in line with your current settings and metadata. It:
 
 - adds category folders you've since enabled, and removes ones you've turned off;
 - drops genre folders that a changed blocklist now excludes;

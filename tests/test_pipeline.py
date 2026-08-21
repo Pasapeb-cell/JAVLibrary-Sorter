@@ -3,6 +3,7 @@ from pathlib import Path
 from javsorter.core.models import MatchStatus, MetadataRecord
 from javsorter.core.scanner import scan_folder
 from javsorter.organize.journal import RunJournal, undo
+from javsorter.organize.options import LIBRARY_LINKS, TAG_FOLDERS, OrganizeOptions
 from javsorter.organize.pipeline import process_item
 from javsorter.scraping.client import ScraperClient
 
@@ -48,10 +49,13 @@ def test_pipeline_sort_in_place(tmp_path):
         result = process_item(
             item,
             record,
-            library_root=source,
-            sort_in_place=True,
-            enabled_categories=["Actress", "Genre", "Studio", "Year"],
-            client=client,
+            OrganizeOptions(
+                root=source,
+                layout=LIBRARY_LINKS,
+                enabled_categories=["Actress", "Genre", "Studio", "Year"],
+                link_only=True,
+            ),
+            client,
         )
 
     canonical = source / "ABC-123.mp4"
@@ -74,12 +78,7 @@ def test_pipeline_import_into_library(tmp_path):
 
     with ScraperClient(base_delay=0, jitter=0) as client:
         result = process_item(
-            item,
-            record,
-            library_root=library,
-            sort_in_place=False,
-            enabled_categories=[],
-            client=client,
+            item, record, OrganizeOptions(root=library, layout=LIBRARY_LINKS), client
         )
 
     expected = library / "MIST-435" / "MIST-435.mp4"
@@ -113,10 +112,14 @@ def test_pipeline_run_can_be_fully_undone(tmp_path):
     run_journal = RunJournal(library_root=str(library))
     with ScraperClient(base_delay=0, jitter=0) as client:
         process_item(
-            items[0], record, library,
-            sort_in_place=False,
-            enabled_categories=["Actress", "Genre", "Studio", "Year"],
-            client=client,
+            items[0],
+            record,
+            OrganizeOptions(
+                root=library,
+                layout=LIBRARY_LINKS,
+                enabled_categories=["Actress", "Genre", "Studio", "Year"],
+            ),
+            client,
             journal=run_journal,
         )
 
@@ -143,8 +146,11 @@ def test_pipeline_undo_leaves_untouched_source_files_alone(tmp_path):
     run_journal = RunJournal(library_root=str(tmp_path / "Library"))
     with ScraperClient(base_delay=0, jitter=0) as client:
         process_item(
-            items[0], record, tmp_path / "Library",
-            sort_in_place=False, enabled_categories=[], client=client, journal=run_journal,
+            items[0],
+            record,
+            OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS),
+            client,
+            journal=run_journal,
         )
 
     undo(run_journal)
@@ -163,8 +169,7 @@ def test_pipeline_skips_duplicates_rather_than_colliding(tmp_path):
 
     with ScraperClient(base_delay=0, jitter=0) as client:
         result = process_item(
-            items[0], record, tmp_path / "Library",
-            sort_in_place=False, enabled_categories=[], client=client,
+            items[0], record, OrganizeOptions(root=tmp_path / "Library", layout=LIBRARY_LINKS), client
         )
 
     # Only the largest was taken into the library...
@@ -186,12 +191,7 @@ def test_pipeline_multi_cd_shares_one_nfo(tmp_path):
 
     with ScraperClient(base_delay=0, jitter=0) as client:
         result = process_item(
-            item,
-            record,
-            library_root=source,
-            sort_in_place=True,
-            enabled_categories=[],
-            client=client,
+            item, record, OrganizeOptions(root=source, layout=LIBRARY_LINKS, link_only=True), client
         )
 
     assert len(result.canonical_paths) == 2

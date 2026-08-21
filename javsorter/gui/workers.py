@@ -10,6 +10,7 @@ from javsorter.core.models import MatchStatus, ScanItem
 from javsorter.core.scanner import scan_folder
 from javsorter.logging_setup import get_logger
 from javsorter.organize.journal import RunJournal
+from javsorter.organize.options import OrganizeOptions
 from javsorter.organize.pipeline import process_item
 from javsorter.organize.rescan import rescan_library
 from javsorter.scraping.cache import MetadataCache
@@ -186,23 +187,19 @@ class ExecuteWorker(CancellableWorker):
     def __init__(
         self,
         matched: list[tuple[int, ScanItem, object]],
-        library_root: Path,
-        sort_in_place: bool,
-        enabled_categories: list[str],
+        options: OrganizeOptions,
         client: ScraperClient,
         runs_dir: Path | None = None,
     ):
         super().__init__()
         self._matched = matched
-        self._library_root = library_root
-        self._sort_in_place = sort_in_place
-        self._enabled_categories = enabled_categories
+        self._options = options
         self._client = client
         self._runs_dir = runs_dir
 
     def run(self) -> None:
         total = len(self._matched)
-        journal = RunJournal(library_root=str(self._library_root))
+        journal = RunJournal(library_root=str(self._options.root))
         journal_path = None
         try:
             for done, (index, item, record) in enumerate(self._matched, start=1):
@@ -211,13 +208,7 @@ class ExecuteWorker(CancellableWorker):
                     break
                 try:
                     result = process_item(
-                        item,
-                        record,
-                        self._library_root,
-                        self._sort_in_place,
-                        self._enabled_categories,
-                        self._client,
-                        journal=journal,
+                        item, record, self._options, self._client, journal=journal
                     )
                     logger.info(
                         "Organized %s: %d file(s), %d link(s), %d skipped",
