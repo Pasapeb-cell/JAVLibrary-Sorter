@@ -4,6 +4,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from javsorter.core.models import MetadataRecord
+from javsorter.organize.longpath import extended
 
 
 def build_nfo_element(record: MetadataRecord, cover_filename: str | None = None) -> ET.Element:
@@ -50,5 +51,5 @@ def write_nfo(record: MetadataRecord, nfo_path: Path, cover_filename: str | None
     movie = build_nfo_element(record, cover_filename=cover_filename)
     tree = ET.ElementTree(movie)
     ET.indent(tree, space="  ")
-    nfo_path.parent.mkdir(parents=True, exist_ok=True)
-    tree.write(nfo_path, encoding="utf-8", xml_declaration=True)
+    Path(extended(nfo_path.parent)).mkdir(parents=True, exist_ok=True)
+    tree.write(extended(nfo_path), encoding="utf-8", xml_declaration=True)

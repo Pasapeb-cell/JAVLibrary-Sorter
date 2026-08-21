@@ -58,6 +58,11 @@ class ScanItem:
     # marker into a genuine third part (vs. uncensored) depends on sibling
     # files and can't be re-derived from a single filename in isolation.
     part_labels: list[str | None] = field(default_factory=list)
+    # Other files that resolved to the same content ID but aren't parts of
+    # a multi-disc release. Deliberately left untouched by the organizer
+    # rather than renamed into collisions -- surfaced for the user to sort
+    # out, since only they know which copy to keep.
+    duplicates: list[Path] = field(default_factory=list)
     metadata: MetadataRecord | None = None
     note: str | None = None
 

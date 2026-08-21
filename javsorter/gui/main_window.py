@@ -14,9 +14,19 @@ from PySide6.QtWidgets import (
 )
 
 from javsorter.config.paths import cache_path as default_cache_path
+from javsorter.config.paths import log_dir as default_log_dir
+from javsorter.config.paths import runs_dir as default_runs_dir
 from javsorter.config.paths import settings_path as default_settings_path
 from javsorter.config.settings import Settings
 from javsorter.core.models import MatchStatus
+from javsorter.logging_setup import (
+    QtLogHandler,
+    attach_qt_handler,
+    configure_file_logging,
+    detach_qt_handler,
+    get_logger,
+)
+from javsorter.organize import journal as journal_module
 from javsorter.gui.scan_table import ScanTableModel
 from javsorter.gui.settings_panel import SettingsPanel
 from javsorter.gui.widgets.dev_mode_dialog import show_symlink_permission_dialog
@@ -30,13 +40,26 @@ from javsorter.scraping.lookup import lookup_for_item
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, cache_path: Path | None = None, settings_path: Path | None = None):
+    def __init__(
+        self,
+        cache_path: Path | None = None,
+        settings_path: Path | None = None,
+        runs_dir: Path | None = None,
+        log_dir: Path | None = None,
+    ):
         super().__init__()
         self.setWindowTitle("JAVLibrary Sorter")
         self.resize(900, 600)
 
         self._settings_path = settings_path or default_settings_path()
         self._settings = Settings.load(self._settings_path)
+        self._runs_dir = runs_dir or default_runs_dir()
+
+        self._log_path = configure_file_logging(log_dir or default_log_dir())
+        self._logger = get_logger("gui")
+        self._qt_log_handler = QtLogHandler()
+        self._qt_log_handler.signals.message.connect(self._on_log_message)
+        attach_qt_handler(self._qt_log_handler)
 
         self._client = ScraperClient()
         self._cache = MetadataCache(cache_path or default_cache_path())
@@ -65,6 +88,8 @@ class MainWindow(QMainWindow):
         self.settings_panel.scan_button.clicked.connect(self._start_scan)
         self.settings_panel.run_button.clicked.connect(self._start_run)
         self.settings_panel.blocked_genres_button.clicked.connect(self._edit_blocked_genres)
+        self.settings_panel.stop_button.clicked.connect(self._stop_current_worker)
+        self.settings_panel.undo_button.clicked.connect(self._undo_last_run)
         self.table_view.doubleClicked.connect(self._on_row_double_clicked)
 
         self._apply_settings()
@@ -77,6 +102,10 @@ class MainWindow(QMainWindow):
             )
 
     def _log(self, message: str) -> None:
+        """Log to the file and, via the Qt handler, to the panel."""
+        self._logger.info(message)
+
+    def _on_log_message(self, message: str, level: int) -> None:
         self.log_view.appendPlainText(message)
 
     def _apply_settings(self) -> None:
@@ -95,6 +124,65 @@ class MainWindow(QMainWindow):
         self._settings.sort_in_place = self.settings_panel.sort_in_place()
         self._settings.enabled_categories = self.settings_panel.enabled_categories()
         self._settings.save(self._settings_path)
+
+    def _active_worker(self):
+        for worker in (self._scan_worker, self._match_worker, self._execute_worker):
+            if worker is not None and worker.isRunning():
+                return worker
+        return None
+
+    def _stop_current_worker(self) -> None:
+        worker = self._active_worker()
+        if worker is None:
+            return
+        worker.request_cancel()
+        self.settings_panel.stop_button.setEnabled(False)
+        self._log("Stopping after the current item...")
+
+    def _set_busy(self, busy: bool) -> None:
+        self.settings_panel.scan_button.setEnabled(not busy)
+        self.settings_panel.stop_button.setEnabled(busy)
+        self.settings_panel.undo_button.setEnabled(not busy)
+        if busy:
+            self.settings_panel.run_button.setEnabled(False)
+
+    def _undo_last_run(self) -> None:
+        journal_path = journal_module.latest_journal(self._runs_dir)
+        if journal_path is None:
+            QMessageBox.information(self, "Nothing to undo", "No previous run was recorded.")
+            return
+
+        try:
+            run_journal = journal_module.RunJournal.load(journal_path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Can't read that run", str(exc))
+            return
+
+        confirmed = QMessageBox.question(
+            self,
+            "Undo last run",
+            f"Undo the run from {run_journal.started_at}?\n\n"
+            f"This reverses {len(run_journal.entries)} recorded action(s): "
+            "category links are removed, generated NFO/cover files are deleted, "
+            "and moved videos go back where they came from.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+
+        report = journal_module.undo(run_journal)
+        self._log(
+            f"Undo complete: {report.files_restored} file(s) moved back, "
+            f"{report.links_removed} link(s) removed, {report.files_removed} generated file(s) deleted."
+        )
+        for failure in report.failures:
+            self._log(f"  could not undo: {failure}")
+
+        # The run is spent either way -- keep it only if part of it survived,
+        # so the button doesn't offer to redo an undo that fully succeeded.
+        if not report.failures:
+            journal_path.unlink(missing_ok=True)
 
     def _edit_blocked_genres(self) -> None:
         dialog = GenreBlocklistDialog(
@@ -139,8 +227,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing folder", "Choose a source folder first.")
             return
 
-        self.settings_panel.scan_button.setEnabled(False)
-        self.settings_panel.run_button.setEnabled(False)
+        self._set_busy(True)
         self._matched_records = {}
         self._log(f"Scanning {source}...")
 
@@ -150,12 +237,18 @@ class MainWindow(QMainWindow):
         self._scan_worker.start()
 
     def _on_scan_failed(self, message: str) -> None:
-        self.settings_panel.scan_button.setEnabled(True)
+        self._set_busy(False)
         QMessageBox.critical(self, "Scan failed", message)
 
     def _on_scanned(self, items) -> None:
         self._model.set_items(items)
         self._log(f"Found {len(items)} item(s). Looking up metadata...")
+
+        for item in items:
+            if item.duplicates:
+                self._log(f"{item.extracted.content_id}: {item.note}")
+                for duplicate in item.duplicates:
+                    self._log(f"  left alone: {duplicate}")
 
         self._match_worker = MatchWorker(
             items, self._cache, self._client, genre_filter=self._settings.genre_filter()
@@ -186,7 +279,7 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(int(done / total * 100))
 
     def _on_matching_finished(self) -> None:
-        self.settings_panel.scan_button.setEnabled(True)
+        self._set_busy(False)
         self.settings_panel.run_button.setEnabled(bool(self._matched_records))
         self._log(f"Matched {len(self._matched_records)} item(s).")
 
@@ -224,13 +317,18 @@ class MainWindow(QMainWindow):
         sort_in_place = self.settings_panel.sort_in_place()
         enabled_categories = self.settings_panel.enabled_categories()
 
-        self.settings_panel.run_button.setEnabled(False)
+        self._set_busy(True)
         self._dev_mode_dialog_shown_this_run = False
         self._log(f"Processing {len(matched)} item(s)...")
         self.progress_bar.setValue(0)
 
         self._execute_worker = ExecuteWorker(
-            matched, Path(library), sort_in_place, enabled_categories, self._client
+            matched,
+            Path(library),
+            sort_in_place,
+            enabled_categories,
+            self._client,
+            runs_dir=self._runs_dir,
         )
         self._execute_worker.item_done.connect(self._on_item_done)
         self._execute_worker.item_error.connect(self._on_item_error)
@@ -267,12 +365,21 @@ class MainWindow(QMainWindow):
         item = self._model.item_at(index)
         self._log(f"{item.extracted.content_id}: ERROR {message}")
 
-    def _on_run_finished(self) -> None:
+    def _on_run_finished(self, journal_path) -> None:
+        self._set_busy(False)
         self.settings_panel.run_button.setEnabled(True)
-        self._log("Done.")
+        if journal_path is not None:
+            self._log("Done. This run can be reversed with 'Undo last run'.")
+        else:
+            self._log("Done.")
 
     def closeEvent(self, event) -> None:
+        worker = self._active_worker()
+        if worker is not None:
+            worker.request_cancel()
+            worker.wait(5000)
         self._save_settings()
         self._cache.close()
         self._client.close()
+        detach_qt_handler(self._qt_log_handler)
         super().closeEvent(event)

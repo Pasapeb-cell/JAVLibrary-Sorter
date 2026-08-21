@@ -32,6 +32,9 @@ class SettingsPanel(QWidget):
         self.scan_button = QPushButton("Scan")
         self.run_button = QPushButton("Run")
         self.run_button.setEnabled(False)
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setEnabled(False)
+        self.undo_button = QPushButton("Undo last run")
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._folder_row("Source folder:", self.source_edit))
@@ -54,6 +57,9 @@ class SettingsPanel(QWidget):
         button_row = QHBoxLayout()
         button_row.addWidget(self.scan_button)
         button_row.addWidget(self.run_button)
+        button_row.addWidget(self.stop_button)
+        button_row.addStretch()
+        button_row.addWidget(self.undo_button)
         layout.addLayout(button_row)
 
     def _folder_row(self, label_text: str, line_edit: QLineEdit) -> QHBoxLayout:

@@ -68,16 +68,35 @@ def test_scan_no_id_files_are_kept_separate(tmp_path):
     assert all(item.status == MatchStatus.NO_ID for item in items)
 
 
-def test_scan_flags_duplicate_matches_without_part_markers(tmp_path):
-    _touch(tmp_path / "ABC-123.mp4")
-    _touch(tmp_path / "ABC-123 [FHD].mkv")
+def test_scan_keeps_largest_duplicate_and_sets_others_aside(tmp_path):
+    """Same ID with no part markers means competing copies, not discs.
+    Renaming them all would collide, so the largest wins and the rest are
+    reported instead of being touched.
+    """
+    smaller = tmp_path / "ABC-123.mp4"
+    larger = tmp_path / "ABC-123 [FHD].mkv"
+    smaller.write_bytes(b"x" * 100)
+    larger.write_bytes(b"x" * 900)
 
     items = scan_folder(tmp_path)
 
     assert len(items) == 1
     item = items[0]
-    assert len(item.parts) == 2
+    assert item.parts == [larger]
+    assert item.part_labels == [None]
+    assert item.duplicates == [smaller]
     assert item.note is not None
+
+
+def test_scan_multi_part_release_is_not_treated_as_duplicates(tmp_path):
+    (tmp_path / "ghi-789-cd1.mp4").write_bytes(b"x" * 100)
+    (tmp_path / "ghi-789-cd2.mp4").write_bytes(b"x" * 900)
+
+    items = scan_folder(tmp_path)
+
+    assert len(items) == 1
+    assert len(items[0].parts) == 2
+    assert items[0].duplicates == []
 
 
 def test_scan_recurses_into_subfolders(tmp_path):

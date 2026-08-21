@@ -17,3 +17,12 @@ def settings_path() -> Path:
 
 def cache_path() -> Path:
     return app_data_dir() / "cache.sqlite3"
+
+
+def log_dir() -> Path:
+    return app_data_dir() / "logs"
+
+
+def runs_dir() -> Path:
+    """Where per-run journals live, so a run can be undone later."""
+    return app_data_dir() / "runs"

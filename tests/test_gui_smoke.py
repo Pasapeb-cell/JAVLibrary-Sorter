@@ -26,7 +26,12 @@ def test_gui_scan_and_run_happy_path(qtbot, tmp_path):
     _touch(source / "hhd800.com@SSIS-001.mp4")
     _touch(source / "not_a_real_id_ZZZZ99999.mp4")
 
-    window = MainWindow(cache_path=tmp_path / "cache.sqlite3", settings_path=tmp_path / "settings.json")
+    window = MainWindow(
+        cache_path=tmp_path / "cache.sqlite3",
+        settings_path=tmp_path / "settings.json",
+        runs_dir=tmp_path / "runs",
+        log_dir=tmp_path / "logs",
+    )
     qtbot.addWidget(window)
 
     window.settings_panel.source_edit.setText(str(source))

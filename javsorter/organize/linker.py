@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from javsorter.organize.longpath import extended
+
 # Windows: "A required privilege is not held by the client" -- raised by
 # os.symlink() when the process has neither admin elevation nor Developer
 # Mode's unprivileged symlink creation enabled.
@@ -58,7 +60,7 @@ def create_symlink(target: Path, link_path: Path) -> LinkResult:
     requirements the caller (pipeline/GUI) must surface the failure
     explicitly rather than silently substituting another link type.
     """
-    link_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(extended(link_path.parent)).mkdir(parents=True, exist_ok=True)
     absolute_target = target.resolve()
 
     if link_path.is_symlink() or link_path.exists():
@@ -70,7 +72,7 @@ def create_symlink(target: Path, link_path: Path) -> LinkResult:
         link_path.unlink()
 
     try:
-        os.symlink(absolute_target, link_path)
+        os.symlink(extended(absolute_target), extended(link_path))
         return LinkResult.ok()
     except OSError as exc:
         is_permission_error = getattr(exc, "winerror", None) == _WINERROR_PRIVILEGE_NOT_HELD

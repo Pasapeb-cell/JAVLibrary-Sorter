@@ -68,6 +68,32 @@ then **Scan** → review the table → **Run**.
 Rows that don't resolve automatically (no ID parsed, an ambiguous `-C` marker, or no
 match) can be **double-clicked** to correct the ID and look it up again.
 
+**Stop** halts a scan or run after the item in progress finishes.
+
+### Undoing a run
+
+Every run is journalled, so **Undo last run** reverses it: category links are removed,
+generated NFO and cover files are deleted, and moved videos go back where they came
+from. A partial or cancelled run is journalled too — that's exactly when undo matters
+most.
+
+Undo is deliberately conservative. A file that already existed before the run is never
+recorded as created, so undo won't delete it (the old contents couldn't be restored
+anyway), and if something new has appeared at a video's original location, that video
+is left in the library and the conflict is reported rather than overwriting anything.
+
+### Duplicates
+
+Two files with the same ID but no `cd1`/`cd2` markers are competing copies, not discs
+of one release — renaming both would collide. The largest is taken into the library and
+the rest are **left exactly where they are** and reported in the Notes column, since
+only you know which copy to keep.
+
+### Logs
+
+The log panel is mirrored to a rotating file at `%APPDATA%\JAVSorter\logs\javsorter.log`,
+so a long run is still auditable after the window is closed.
+
 ## Development
 
 ```bash
@@ -86,7 +112,7 @@ r18.dev's schema changes.
 | --- | --- |
 | `javsorter/core/` | Filename → content ID extraction, folder scanning, multi-part grouping |
 | `javsorter/scraping/` | Rate-limited HTTP client, r18.dev lookup, JSON parsing, SQLite cache |
-| `javsorter/organize/` | Move/rename, NFO writing, cover download, symlinks, pipeline |
+| `javsorter/organize/` | Move/rename, NFO writing, cover download, symlinks, run journal, pipeline |
 | `javsorter/gui/` | PySide6 window, background workers, dialogs |
 | `javsorter/config/` | JSON settings persistence in `%APPDATA%\JAVSorter\` |
 

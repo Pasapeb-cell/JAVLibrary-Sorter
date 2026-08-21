@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from javsorter.organize.longpath import extended
 from javsorter.scraping.client import ScraperClient
 
 
@@ -19,8 +20,8 @@ def download_cover(client: ScraperClient, cover_url: str, destination: Path) -> 
         content_type = response.headers.get("Content-Type", "")
         if not content_type.startswith("image/"):
             return False
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(response.content)
+        Path(extended(destination.parent)).mkdir(parents=True, exist_ok=True)
+        Path(extended(destination)).write_bytes(response.content)
         return True
     except Exception:
         return False

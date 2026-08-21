@@ -3,15 +3,21 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from javsorter.organize.longpath import truncate_component
+
 _ILLEGAL_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 
 
 def sanitize_component(name: str) -> str:
     """Make a string safe to use as a single Windows path component, e.g.
     a genre like "Threesome / Foursome" containing a path separator.
+
+    Also caps the length: a very long name eats into the path budget and
+    can push the full path past Windows' limit.
     """
     cleaned = _ILLEGAL_CHARS_RE.sub("_", name)
     cleaned = cleaned.strip(" .")
+    cleaned = truncate_component(cleaned).strip(" .")
     return cleaned or "_"
 
 

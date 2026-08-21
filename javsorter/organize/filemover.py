@@ -3,6 +3,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from javsorter.organize.longpath import extended
+
 
 def move_file(source: Path, destination: Path) -> Path:
     """Move source to destination.
@@ -14,11 +16,11 @@ def move_file(source: Path, destination: Path) -> Path:
     if source.resolve() == destination.resolve():
         return destination
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    Path(extended(destination.parent)).mkdir(parents=True, exist_ok=True)
     if destination.exists():
         destination = _next_available_name(destination)
 
-    shutil.move(str(source), str(destination))
+    shutil.move(str(extended(source)), str(extended(destination)))
     return destination
 
 

@@ -7,14 +7,37 @@ from PySide6.QtCore import QThread, Signal
 from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.models import MatchStatus, ScanItem
 from javsorter.core.scanner import scan_folder
+from javsorter.logging_setup import get_logger
+from javsorter.organize.journal import RunJournal
 from javsorter.organize.pipeline import process_item
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import NoMatchError, ScrapeError
 from javsorter.scraping.lookup import lookup_for_item
 
+logger = get_logger("workers")
 
-class ScanWorker(QThread):
+
+class CancellableWorker(QThread):
+    """Base for workers the user can stop from the GUI.
+
+    Cancellation is cooperative: the current item finishes, then the loop
+    stops before the next one.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        self._cancel_requested = True
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel_requested
+
+
+class ScanWorker(CancellableWorker):
     finished_scan = Signal(list)  # list[ScanItem]
     failed = Signal(str)
 
@@ -24,16 +47,18 @@ class ScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            items = scan_folder(self._source_folder)
+            items = scan_folder(self._source_folder, should_cancel=lambda: self._cancel_requested)
         except Exception as exc:
             # An escaping exception would kill the thread without ever
             # emitting, leaving the GUI's buttons disabled for good.
+            logger.exception("Scan failed")
             self.failed.emit(str(exc))
             return
+        logger.info("Scanned %s: %d item(s)", self._source_folder, len(items))
         self.finished_scan.emit(items)
 
 
-class MatchWorker(QThread):
+class MatchWorker(CancellableWorker):
     """Looks up metadata for every ID_FOUND/AMBIGUOUS_ID item, checking the
     local cache before hitting the rate-limited network client.
     """
@@ -65,17 +90,25 @@ class MatchWorker(QThread):
         total = len(lookupable)
         try:
             for done, (index, item) in enumerate(lookupable, start=1):
+                if self._cancel_requested:
+                    logger.info("Metadata lookup cancelled after %d/%d", done - 1, total)
+                    break
+                content_id = item.extracted.content_id
                 try:
                     record = lookup_for_item(
                         self._cache, self._client, item.extracted, genre_filter=self._genre_filter
                     )
+                    logger.info("Matched %s: %s", content_id, record.title)
                     self.item_matched.emit(index, record)
                 except NoMatchError:
+                    logger.warning("No match for %s", content_id)
                     self.item_failed.emit(index, "No match found on r18.dev")
                 except ScrapeError as exc:
+                    logger.error("Lookup failed for %s: %s", content_id, exc)
                     self.item_failed.emit(index, str(exc))
                 except Exception as exc:
                     # One bad item must not take down the whole run.
+                    logger.exception("Unexpected error looking up %s", content_id)
                     self.item_failed.emit(index, f"Unexpected error: {exc}")
                 self.progress.emit(done, total)
         finally:
@@ -84,13 +117,13 @@ class MatchWorker(QThread):
             self.finished_matching.emit()
 
 
-class ExecuteWorker(QThread):
+class ExecuteWorker(CancellableWorker):
     """Runs organize.pipeline.process_item for every matched row."""
 
     item_done = Signal(int, object)  # row index, ProcessResult
     item_error = Signal(int, str)
     progress = Signal(int, int)
-    finished_run = Signal()
+    finished_run = Signal(object)  # Path to the saved journal, or None
 
     def __init__(
         self,
@@ -99,6 +132,7 @@ class ExecuteWorker(QThread):
         sort_in_place: bool,
         enabled_categories: list[str],
         client: ScraperClient,
+        runs_dir: Path | None = None,
     ):
         super().__init__()
         self._matched = matched
@@ -106,19 +140,16 @@ class ExecuteWorker(QThread):
         self._sort_in_place = sort_in_place
         self._enabled_categories = enabled_categories
         self._client = client
-        self._cancel_requested = False
-
-    def request_cancel(self) -> None:
-        """Cooperative cancellation: finishes the item in progress, then
-        stops before starting the next one.
-        """
-        self._cancel_requested = True
+        self._runs_dir = runs_dir
 
     def run(self) -> None:
         total = len(self._matched)
+        journal = RunJournal(library_root=str(self._library_root))
+        journal_path = None
         try:
             for done, (index, item, record) in enumerate(self._matched, start=1):
                 if self._cancel_requested:
+                    logger.info("Run cancelled after %d/%d item(s)", done - 1, total)
                     break
                 try:
                     result = process_item(
@@ -128,12 +159,29 @@ class ExecuteWorker(QThread):
                         self._sort_in_place,
                         self._enabled_categories,
                         self._client,
+                        journal=journal,
+                    )
+                    logger.info(
+                        "Organized %s: %d file(s), %d link(s), %d skipped",
+                        result.content_id,
+                        len(result.canonical_paths),
+                        len(result.link_results) - len(result.skipped_links),
+                        len(result.skipped_links),
                     )
                     self.item_done.emit(index, result)
                 except Exception as exc:
                     # Keep going: a failure on one release (locked file,
                     # bad path) shouldn't abandon the rest of the batch.
+                    logger.exception("Failed to organize item %d", index)
                     self.item_error.emit(index, str(exc))
                 self.progress.emit(done, total)
         finally:
-            self.finished_run.emit()
+            # Save whatever was done, even on cancel or error -- a partial
+            # run is exactly the case where undo matters most.
+            if self._runs_dir is not None and not journal.is_empty():
+                try:
+                    journal_path = journal.save(self._runs_dir)
+                    logger.info("Run journal saved to %s", journal_path)
+                except OSError:
+                    logger.exception("Could not save the run journal")
+            self.finished_run.emit(journal_path)

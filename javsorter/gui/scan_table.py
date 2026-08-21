@@ -4,7 +4,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
 from javsorter.core.models import MatchStatus, ScanItem
 
-_COLUMNS = ["Filename", "Parsed ID", "Status", "Matched Title"]
+_COLUMNS = ["Filename", "Parsed ID", "Status", "Matched Title", "Notes"]
 
 _STATUS_LABELS = {
     MatchStatus.NO_ID: "No ID found",
@@ -59,4 +59,6 @@ class ScanTableModel(QAbstractTableModel):
             return _STATUS_LABELS.get(item.status, item.status.name)
         if column == 3:
             return item.metadata.title if item.metadata else ""
+        if column == 4:
+            return item.note or ""
         return None
