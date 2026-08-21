@@ -31,6 +31,46 @@ def test_cache_put_not_found(tmp_path):
     assert cache.get("ZZZZ-999") is None
 
 
+def test_corrupt_cache_file_self_heals(tmp_path):
+    """A damaged cache must never stop the app launching -- MetadataCache is
+    built during MainWindow.__init__, so raising here means no window at all.
+    """
+    db_path = tmp_path / "cache.sqlite3"
+    db_path.write_bytes(b"this is not a database at all")
+
+    cache = MetadataCache(db_path)
+
+    assert cache.recovered_from_corruption is True
+    cache.put("ABC-123", _record())
+    assert cache.get("ABC-123") == _record()
+    cache.close()
+
+
+def test_corrupt_cache_file_is_kept_aside_not_destroyed(tmp_path):
+    db_path = tmp_path / "cache.sqlite3"
+    db_path.write_bytes(b"not a database")
+
+    cache = MetadataCache(db_path)
+    cache.close()
+
+    quarantined = tmp_path / "cache.sqlite3.corrupt"
+    assert quarantined.exists()
+    assert quarantined.read_bytes() == b"not a database"
+
+
+def test_healthy_cache_is_not_flagged_as_recovered(tmp_path):
+    db_path = tmp_path / "cache.sqlite3"
+    first = MetadataCache(db_path)
+    first.put("ABC-123", _record())
+    first.close()
+
+    second = MetadataCache(db_path)
+
+    assert second.recovered_from_corruption is False
+    assert second.get("ABC-123") == _record()
+    second.close()
+
+
 def test_cache_persists_across_instances(tmp_path):
     db_path = tmp_path / "cache.sqlite3"
     cache1 = MetadataCache(db_path)

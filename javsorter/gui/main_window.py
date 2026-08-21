@@ -69,6 +69,13 @@ class MainWindow(QMainWindow):
 
         self._apply_settings()
 
+        if self._cache.recovered_from_corruption:
+            self._log(
+                "The metadata cache was unreadable and has been reset "
+                "(the old file was kept alongside it with a .corrupt suffix). "
+                "Lookups will be re-fetched."
+            )
+
     def _log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
 

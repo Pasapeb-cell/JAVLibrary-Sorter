@@ -31,10 +31,17 @@ class MetadataCache:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        with self._lock:
-            self._conn.execute(_SCHEMA)
-            self._conn.commit()
+        self.recovered_from_corruption = False
+
+        try:
+            self._conn = _connect(db_path)
+        except sqlite3.DatabaseError:
+            # A damaged cache file must never stop the app from starting --
+            # it's disposable data. Move it aside (rather than delete it,
+            # in case it's worth a look) and start a fresh one.
+            _quarantine(db_path)
+            self._conn = _connect(db_path)
+            self.recovered_from_corruption = True
 
     def get(self, content_id: str) -> MetadataRecord | None:
         """Return the cached record for content_id, or None if there's no
@@ -85,6 +92,31 @@ class MetadataCache:
 
     def __exit__(self, *exc_info: object) -> None:
         self.close()
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open the cache and ensure its schema exists.
+
+    sqlite3.connect() succeeds lazily on a damaged file, so corruption
+    only surfaces here, on the first statement.
+    """
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    try:
+        conn.execute(_SCHEMA)
+        conn.commit()
+    except Exception:
+        # Close before propagating, or Windows keeps the file locked and
+        # the caller can't move it aside.
+        conn.close()
+        raise
+    return conn
+
+
+def _quarantine(db_path: Path) -> Path:
+    corrupt_path = db_path.with_suffix(db_path.suffix + ".corrupt")
+    corrupt_path.unlink(missing_ok=True)
+    db_path.replace(corrupt_path)
+    return corrupt_path
 
 
 def _now() -> str:
