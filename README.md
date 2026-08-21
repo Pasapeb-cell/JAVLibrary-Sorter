@@ -94,6 +94,37 @@ only you know which copy to keep.
 The log panel is mirrored to a rotating file at `%APPDATA%\JAVSorter\logs\javsorter.log`,
 so a long run is still auditable after the window is closed.
 
+## Rescanning an existing library
+
+**Rescan library** brings an already-sorted library back in line with your current
+settings and metadata. It:
+
+- adds category folders you've since enabled, and removes ones you've turned off;
+- drops genre folders that a changed blocklist now excludes;
+- prunes links whose video has been deleted or moved away;
+- writes any missing NFO and fetches any missing cover.
+
+It **never moves or deletes a video** — only the library's own scaffolding. Releases it
+can't find metadata for are left completely alone, links included, since without
+metadata there's no way to tell a stale link from a good one. Links pointing outside the
+library (as sort-in-place produces) are also left alone. Running it twice in a row
+changes nothing the second time, and a rescan can be undone like any other run.
+
+## Building a standalone .exe
+
+```bash
+.venv\Scripts\pip install -r requirements-dev.txt
+.venv\Scripts\pyinstaller JAVLibrarySorter.spec
+```
+
+The result is `dist/JAVLibrarySorter/JAVLibrarySorter.exe`, a self-contained folder
+(~126 MB) that runs without Python installed. Copy the whole `JAVLibrarySorter` folder,
+not just the `.exe`.
+
+It's a `onedir` build on purpose: `onefile` would unpack Qt to a temp folder on every
+launch, which only makes startup slower. Developer Mode is still required on the target
+machine for category-folder links.
+
 ## Development
 
 ```bash

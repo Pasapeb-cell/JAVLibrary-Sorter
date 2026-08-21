@@ -5,11 +5,13 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from javsorter.core.genre_filter import GenreFilter
+from javsorter.core.id_extractor import extract_id
 from javsorter.core.models import MatchStatus, ScanItem
 from javsorter.core.scanner import scan_folder
 from javsorter.logging_setup import get_logger
 from javsorter.organize.journal import RunJournal
 from javsorter.organize.pipeline import process_item
+from javsorter.organize.rescan import rescan_library
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import NoMatchError, ScrapeError
@@ -115,6 +117,62 @@ class MatchWorker(CancellableWorker):
             # Always emitted, so the GUI re-enables its buttons even if
             # something above went unexpectedly wrong.
             self.finished_matching.emit()
+
+
+class RescanWorker(CancellableWorker):
+    """Brings an already-sorted library back in line with current settings
+    and metadata, without moving or deleting any videos.
+    """
+
+    progress = Signal(int, int)
+    finished_rescan = Signal(object, object)  # RescanReport, journal path or None
+
+    def __init__(
+        self,
+        library_root: Path,
+        enabled_categories: list[str],
+        cache: MetadataCache,
+        client: ScraperClient,
+        genre_filter: GenreFilter | None = None,
+        runs_dir: Path | None = None,
+    ):
+        super().__init__()
+        self._library_root = library_root
+        self._enabled_categories = enabled_categories
+        self._cache = cache
+        self._client = client
+        self._genre_filter = genre_filter
+        self._runs_dir = runs_dir
+
+    def run(self) -> None:
+        journal = RunJournal(library_root=str(self._library_root))
+        journal_path = None
+        report = None
+        try:
+            report = rescan_library(
+                self._library_root,
+                self._enabled_categories,
+                self._resolve,
+                self._client,
+                journal=journal,
+                should_cancel=lambda: self._cancel_requested,
+                progress=lambda done, total: self.progress.emit(done, total),
+            )
+        except Exception:
+            logger.exception("Rescan failed")
+        finally:
+            if self._runs_dir is not None and not journal.is_empty():
+                try:
+                    journal_path = journal.save(self._runs_dir)
+                except OSError:
+                    logger.exception("Could not save the rescan journal")
+            self.finished_rescan.emit(report, journal_path)
+
+    def _resolve(self, content_id: str):
+        extracted = extract_id(f"{content_id}.mp4")
+        return lookup_for_item(
+            self._cache, self._client, extracted, genre_filter=self._genre_filter
+        )
 
 
 class ExecuteWorker(CancellableWorker):

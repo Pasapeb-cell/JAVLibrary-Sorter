@@ -32,7 +32,7 @@ from javsorter.gui.settings_panel import SettingsPanel
 from javsorter.gui.widgets.dev_mode_dialog import show_symlink_permission_dialog
 from javsorter.gui.widgets.genre_blocklist_dialog import GenreBlocklistDialog
 from javsorter.gui.widgets.match_review_dialog import MatchReviewDialog
-from javsorter.gui.workers import ExecuteWorker, MatchWorker, ScanWorker
+from javsorter.gui.workers import ExecuteWorker, MatchWorker, RescanWorker, ScanWorker
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import ScrapeError
@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._scan_worker: ScanWorker | None = None
         self._match_worker: MatchWorker | None = None
         self._execute_worker: ExecuteWorker | None = None
+        self._rescan_worker: RescanWorker | None = None
         self._dev_mode_dialog_shown_this_run = False
 
         self.settings_panel = SettingsPanel()
@@ -89,6 +90,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.run_button.clicked.connect(self._start_run)
         self.settings_panel.blocked_genres_button.clicked.connect(self._edit_blocked_genres)
         self.settings_panel.stop_button.clicked.connect(self._stop_current_worker)
+        self.settings_panel.rescan_button.clicked.connect(self._start_rescan)
         self.settings_panel.undo_button.clicked.connect(self._undo_last_run)
         self.table_view.doubleClicked.connect(self._on_row_double_clicked)
 
@@ -126,10 +128,63 @@ class MainWindow(QMainWindow):
         self._settings.save(self._settings_path)
 
     def _active_worker(self):
-        for worker in (self._scan_worker, self._match_worker, self._execute_worker):
+        for worker in (
+            self._scan_worker,
+            self._match_worker,
+            self._execute_worker,
+            self._rescan_worker,
+        ):
             if worker is not None and worker.isRunning():
                 return worker
         return None
+
+    def _start_rescan(self) -> None:
+        library = self.settings_panel.library_edit.text().strip()
+        if not library:
+            QMessageBox.warning(self, "Missing folder", "Choose a library folder first.")
+            return
+        if not Path(library).exists():
+            QMessageBox.warning(self, "No such folder", f"{library} doesn't exist.")
+            return
+
+        self._set_busy(True)
+        self.progress_bar.setValue(0)
+        self._log(f"Rescanning {library}...")
+
+        self._rescan_worker = RescanWorker(
+            Path(library),
+            self.settings_panel.enabled_categories(),
+            self._cache,
+            self._client,
+            genre_filter=self._settings.genre_filter(),
+            runs_dir=self._runs_dir,
+        )
+        self._rescan_worker.progress.connect(self._on_progress)
+        self._rescan_worker.finished_rescan.connect(self._on_rescan_finished)
+        self._rescan_worker.start()
+
+    def _on_rescan_finished(self, report, journal_path) -> None:
+        self._set_busy(False)
+        self.settings_panel.run_button.setEnabled(bool(self._matched_records))
+
+        if report is None:
+            self._log("Rescan failed; see the log file for details.")
+            return
+
+        self._log(
+            f"Rescan of {report.releases} release(s): "
+            f"{report.links_created} link(s) added, "
+            f"{report.stale_links_removed} stale removed, "
+            f"{report.broken_links_removed} broken removed, "
+            f"{report.nfos_written} NFO(s) written, "
+            f"{report.covers_downloaded} cover(s) fetched."
+        )
+        if report.unmatched:
+            self._log(f"  no metadata for: {', '.join(report.unmatched)} (left untouched)")
+        for failure in report.failures:
+            self._log(f"  {failure}")
+        if journal_path is not None:
+            self._log("This rescan can be reversed with 'Undo last run'.")
 
     def _stop_current_worker(self) -> None:
         worker = self._active_worker()
@@ -143,6 +198,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.scan_button.setEnabled(not busy)
         self.settings_panel.stop_button.setEnabled(busy)
         self.settings_panel.undo_button.setEnabled(not busy)
+        self.settings_panel.rescan_button.setEnabled(not busy)
         if busy:
             self.settings_panel.run_button.setEnabled(False)
 

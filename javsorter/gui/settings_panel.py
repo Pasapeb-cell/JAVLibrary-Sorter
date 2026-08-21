@@ -34,6 +34,11 @@ class SettingsPanel(QWidget):
         self.run_button.setEnabled(False)
         self.stop_button = QPushButton("Stop")
         self.stop_button.setEnabled(False)
+        self.rescan_button = QPushButton("Rescan library")
+        self.rescan_button.setToolTip(
+            "Rebuild category folders and refresh NFOs for an already-sorted "
+            "library. Never moves or deletes videos."
+        )
         self.undo_button = QPushButton("Undo last run")
 
         layout = QVBoxLayout(self)
@@ -59,6 +64,7 @@ class SettingsPanel(QWidget):
         button_row.addWidget(self.run_button)
         button_row.addWidget(self.stop_button)
         button_row.addStretch()
+        button_row.addWidget(self.rescan_button)
         button_row.addWidget(self.undo_button)
         layout.addLayout(button_row)
 

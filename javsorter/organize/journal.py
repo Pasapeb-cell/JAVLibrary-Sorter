@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ logger = get_logger("journal")
 MOVE = "move"
 CREATE_FILE = "create_file"
 CREATE_LINK = "create_link"
+REMOVE_LINK = "remove_link"
 
 
 @dataclass
@@ -47,6 +49,12 @@ class RunJournal:
     def record_created_link(self, path: Path) -> None:
         self.entries.append(JournalEntry(CREATE_LINK, str(path)))
 
+    def record_removed_link(self, path: Path, target: str) -> None:
+        """A link a rescan pruned; `target` is what it pointed at, so undo
+        can put it back.
+        """
+        self.entries.append(JournalEntry(REMOVE_LINK, str(path), target))
+
     def is_empty(self) -> bool:
         return not self.entries
 
@@ -75,13 +83,14 @@ class RunJournal:
 @dataclass
 class UndoReport:
     links_removed: int = 0
+    links_restored: int = 0
     files_removed: int = 0
     files_restored: int = 0
     failures: list[str] = field(default_factory=list)
 
     @property
     def total_reversed(self) -> int:
-        return self.links_removed + self.files_removed + self.files_restored
+        return self.links_removed + self.links_restored + self.files_removed + self.files_restored
 
 
 def latest_journal(runs_dir: Path) -> Path | None:
@@ -99,6 +108,8 @@ def undo(journal: RunJournal) -> UndoReport:
         try:
             if entry.action == CREATE_LINK:
                 _remove_link(Path(entry.path), report)
+            elif entry.action == REMOVE_LINK:
+                _restore_link(Path(entry.path), entry.source, report)
             elif entry.action == CREATE_FILE:
                 _remove_file(Path(entry.path), report)
             elif entry.action == MOVE:
@@ -116,6 +127,18 @@ def _remove_link(path: Path, report: UndoReport) -> None:
     if path.is_symlink():
         path.unlink()
         report.links_removed += 1
+
+
+def _restore_link(path: Path, target: str | None, report: UndoReport) -> None:
+    if not target or path.exists() or path.is_symlink():
+        return
+    Path(extended(path.parent)).mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(target, path)
+        report.links_restored += 1
+    except OSError as exc:
+        # No symlink privilege any more, most likely. Report, don't crash.
+        report.failures.append(f"{path}: {exc}")
 
 
 def _remove_file(path: Path, report: UndoReport) -> None:
