@@ -202,6 +202,10 @@ CREATE TABLE entry_actresses (
 );
 CREATE INDEX entries_content_idx ON entries(content_id);
 CREATE INDEX entries_dvd_idx ON entries(dvd_id_norm);
+CREATE INDEX raw_videos_content_idx ON raw_videos(content_id);
+CREATE INDEX raw_actresses_id_idx ON raw_actresses(id);
+CREATE INDEX raw_video_actresses_content_idx
+    ON raw_video_actresses(content_id, ordinality, actress_id);
 """
 
 

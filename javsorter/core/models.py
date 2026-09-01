@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from javsorter.core.actress_identity import IdentityResolution
 
 
 class MatchStatus(Enum):
@@ -68,7 +72,7 @@ class ScanItem:
     note: str | None = None
     # Identity resolution is kept alongside (not folded into) filename match
     # status so review-required rows can be displayed and edited safely.
-    resolution: object | None = None
+    resolution: IdentityResolution | None = None
 
     @property
     def primary_path(self) -> Path:

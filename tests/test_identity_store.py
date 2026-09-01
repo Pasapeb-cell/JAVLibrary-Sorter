@@ -47,6 +47,21 @@ def test_alias_override_is_separate_from_release_decision(tmp_path):
     store.close()
 
 
+def test_atomic_correction_reuse_preserves_aliases(tmp_path):
+    store = IdentityDecisionStore(tmp_path / "decisions.sqlite3")
+    store.save_release_decision_with_aliases(
+        "ABC-1",
+        kind=DecisionKind.CORRECTION,
+        actresses=["Alice Example"],
+        stable_ids=["a1"],
+        alias_overrides=[("a1", "Alice Example", ("A. Example",))],
+    )
+    alias = store.get_alias_override("a1")
+    assert alias is not None
+    assert alias.aliases == ("A. Example",)
+    store.close()
+
+
 def test_corrupt_store_is_unavailable_and_not_rebuilt(tmp_path):
     path = tmp_path / "decisions.sqlite3"
     path.write_bytes(b"not sqlite")

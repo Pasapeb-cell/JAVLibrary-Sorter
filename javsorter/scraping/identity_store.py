@@ -227,7 +227,7 @@ class IdentityDecisionStore:
         stable_ids: list[str] | tuple[str, ...] = (),
         captured_r18_actresses: list[str] | tuple[str, ...] = (),
         snapshot_revision: str | None = None,
-        alias_overrides: list[tuple[str, str]] = (),
+        alias_overrides: list[tuple[str, str, tuple[str, ...]]] = (),
     ) -> ActressDecision:
         """Persist a release decision and identity aliases atomically."""
         key = canonical_release_key(release_id)
@@ -252,14 +252,14 @@ class IdentityDecisionStore:
                     (key, kind.value, json.dumps(normalized, ensure_ascii=False), json.dumps(ids, ensure_ascii=False),
                      json.dumps(captured, ensure_ascii=False), snapshot_revision, updated_at),
                 )
-                for stable_id, canonical_name in alias_overrides:
+                for stable_id, canonical_name, aliases in alias_overrides:
                     stable_id = stable_id.strip()
                     canonical_name = " ".join(canonical_name.split())
                     if not stable_id or not canonical_name:
                         raise ValueError("stable ID and canonical actress name are required")
                     conn.execute(
                         "INSERT OR REPLACE INTO identity_aliases VALUES (?, ?, ?, ?, ?)",
-                        (stable_id, canonical_name, json.dumps((), ensure_ascii=False), snapshot_revision, updated_at),
+                        (stable_id, canonical_name, json.dumps(tuple(aliases), ensure_ascii=False), snapshot_revision, updated_at),
                     )
                 conn.commit()
                 reread = self.get_release_decision(key)

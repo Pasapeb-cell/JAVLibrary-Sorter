@@ -203,9 +203,18 @@ machine for category-folder links.
 
 The offline suite never touches the network: the scraper and registry importer are
 tested against committed JSON/SQL fixtures in `tests/fixtures/`. The optional live
-checks are explicit diagnostics only. To verify recovery for your library, compare a
-known title whose R18 actress list is wrong or missing, then use the registry update
-and confirm the corrected ordered list before running the organizer.
+checks are explicit diagnostics only. To verify recovery for your library, set the
+known-bad ID and the expected ordered names from your JavLibrary comparison, then run
+the registry diagnostic (it downloads the large weekly dump):
+
+```powershell
+$env:JAVSORTER_LIVE_BAD_ID = "ABC-123"
+$env:JAVSORTER_LIVE_EXPECTED_ACTRESSES = "Correct Name 1|Correct Name 2"
+.venv\Scripts\python -m pytest -m live tests/test_live_registry.py
+```
+
+The diagnostic compares the live R18 list with the dump result before the organizer
+is allowed to use it.
 
 ### Layout
 

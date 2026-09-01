@@ -54,6 +54,7 @@ class MatchReviewDialog(QDialog):
         self._genre_filter = genre_filter
         self._resolver = resolver
         self._identity_store = identity_store
+        self._owns_identity_store = False
         self.result_record: MetadataRecord | None = record
         self.result_resolution: IdentityResolution | None = resolution
         self.result_content_id: str | None = guessed_id
@@ -159,6 +160,7 @@ class MatchReviewDialog(QDialog):
 
         if self._identity_store is None:
             self._identity_store = IdentityDecisionStore(identity_store_path())
+            self._owns_identity_store = True
         try:
             kind = DecisionKind.FALLBACK if fallback else DecisionKind.CORRECTION
             reuse = (
@@ -181,7 +183,7 @@ class MatchReviewDialog(QDialog):
                     actresses=names,
                     stable_ids=stable_ids,
                     captured_r18_actresses=self.result_record.actresses,
-                    alias_overrides=list(zip(stable_ids, names)),
+                    alias_overrides=[(stable_id, name, ()) for stable_id, name in zip(stable_ids, names)],
                 )
             else:
                 saved = self._identity_store.save_release_decision(
@@ -242,3 +244,9 @@ class MatchReviewDialog(QDialog):
             return False
         self._set_record(resolution.record if resolution is not None else record, resolution)
         return True
+
+    def closeEvent(self, event) -> None:
+        if self._owns_identity_store and self._identity_store is not None:
+            self._identity_store.close()
+            self._identity_store = None
+        super().closeEvent(event)
