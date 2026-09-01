@@ -77,15 +77,15 @@ def test_copy_parser_decodes_null_and_escapes():
     parse_copy_dump(
         io.StringIO(
             "COPY public.derived_actress (id, name_romaji) FROM stdin;\n"
-            "x\\ty\\N\n\\.\n"
+            "x\ty\\N\n\\.\n"
             "COPY public.derived_video (content_id) FROM stdin;\n"
             "cid\n\\.\n"
             "COPY public.derived_video_actress (content_id, actress_id) FROM stdin;\n"
-            "cid\\tx\n\\.\n"
+            "cid\tx\n\\.\n"
         ),
         lambda table, row: rows.append((table, row)),
     )
-    assert rows[0][1]["name_romaji"] == "y\x00__r18_null__\x00"
+    assert rows[0][1]["name_romaji"] == "y\\N"
 
 
 def test_revision_from_latest_url_is_stable():

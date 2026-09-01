@@ -211,6 +211,8 @@ class MainWindow(QMainWindow):
         )
         if report.unmatched:
             self._log(f"  no metadata for: {', '.join(report.unmatched)} (left untouched)")
+        for content_id, reason in getattr(report, "review_reasons", {}).items():
+            self._log(f"  review required for {content_id}: {reason}")
         for failure in report.failures:
             self._log(f"  {failure}")
         if journal_path is not None:
