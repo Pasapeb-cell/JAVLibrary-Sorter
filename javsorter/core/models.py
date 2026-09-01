@@ -12,6 +12,7 @@ class MatchStatus(Enum):
     MATCHED = auto()
     MULTIPLE_CANDIDATES = auto()
     NO_MATCH = auto()
+    REVIEW_REQUIRED = auto()
     ERROR = auto()
 
 
@@ -65,6 +66,9 @@ class ScanItem:
     duplicates: list[Path] = field(default_factory=list)
     metadata: MetadataRecord | None = None
     note: str | None = None
+    # Identity resolution is kept alongside (not folded into) filename match
+    # status so review-required rows can be displayed and edited safely.
+    resolution: object | None = None
 
     @property
     def primary_path(self) -> Path:

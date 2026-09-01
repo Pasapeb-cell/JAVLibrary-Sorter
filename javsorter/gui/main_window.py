@@ -14,7 +14,10 @@ from PySide6.QtWidgets import (
 )
 
 from javsorter.config.paths import cache_path as default_cache_path
+from javsorter.config.paths import identity_store_path as default_identity_store_path
 from javsorter.config.paths import log_dir as default_log_dir
+from javsorter.config.paths import registry_dir as default_registry_dir
+from javsorter.config.paths import registry_download_url
 from javsorter.config.paths import runs_dir as default_runs_dir
 from javsorter.config.paths import settings_path as default_settings_path
 from javsorter.config.settings import Settings
@@ -34,11 +37,13 @@ from javsorter.gui.settings_panel import SettingsPanel
 from javsorter.gui.widgets.dev_mode_dialog import show_symlink_permission_dialog
 from javsorter.gui.widgets.genre_blocklist_dialog import GenreBlocklistDialog
 from javsorter.gui.widgets.match_review_dialog import MatchReviewDialog
-from javsorter.gui.workers import ExecuteWorker, MatchWorker, RescanWorker, ScanWorker
+from javsorter.gui.workers import ExecuteWorker, MatchWorker, RegistryUpdateWorker, RescanWorker, ScanWorker
 from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import ScrapeError
-from javsorter.scraping.lookup import lookup_for_item
+from javsorter.scraping.actress_registry import RegistryManager
+from javsorter.scraping.identity_lookup import IdentityResolver
+from javsorter.scraping.identity_store import IdentityDecisionStore
 
 
 class MainWindow(QMainWindow):
@@ -48,6 +53,8 @@ class MainWindow(QMainWindow):
         settings_path: Path | None = None,
         runs_dir: Path | None = None,
         log_dir: Path | None = None,
+        identity_store_path: Path | None = None,
+        registry_root: Path | None = None,
     ):
         super().__init__()
         self.setWindowTitle("JAVLibrary Sorter")
@@ -65,12 +72,17 @@ class MainWindow(QMainWindow):
 
         self._client = ScraperClient()
         self._cache = MetadataCache(cache_path or default_cache_path())
+        self._identity_store = IdentityDecisionStore(identity_store_path or default_identity_store_path())
+        registry_root = registry_root or default_registry_dir()
+        self._registry_manager = RegistryManager(registry_root, registry_root / "active")
+        self._resolver = IdentityResolver(self._identity_store, self._registry_manager)
         self._model = ScanTableModel()
         self._matched_records: dict[int, object] = {}
         self._scan_worker: ScanWorker | None = None
         self._match_worker: MatchWorker | None = None
         self._execute_worker: ExecuteWorker | None = None
         self._rescan_worker: RescanWorker | None = None
+        self._registry_update_worker: RegistryUpdateWorker | None = None
         self._dev_mode_dialog_shown_this_run = False
 
         self.settings_panel = SettingsPanel()
@@ -93,6 +105,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.blocked_genres_button.clicked.connect(self._edit_blocked_genres)
         self.settings_panel.stop_button.clicked.connect(self._stop_current_worker)
         self.settings_panel.rescan_button.clicked.connect(self._start_rescan)
+        self.settings_panel.registry_button.clicked.connect(self._start_registry_update)
         self.settings_panel.undo_button.clicked.connect(self._undo_last_run)
         self.table_view.doubleClicked.connect(self._on_row_double_clicked)
 
@@ -104,6 +117,8 @@ class MainWindow(QMainWindow):
                 "(the old file was kept alongside it with a .corrupt suffix). "
                 "Lookups will be re-fetched."
             )
+        if not self._identity_store.available:
+            self._log("Actress decisions are unavailable; affected rows will remain held for review.")
 
     def _log(self, message: str) -> None:
         """Log to the file and, via the Qt handler, to the panel."""
@@ -144,6 +159,7 @@ class MainWindow(QMainWindow):
         for worker in (
             self._scan_worker,
             self._match_worker,
+            self._registry_update_worker,
             self._execute_worker,
             self._rescan_worker,
         ):
@@ -171,6 +187,7 @@ class MainWindow(QMainWindow):
             self._client,
             genre_filter=self._settings.genre_filter(),
             runs_dir=self._runs_dir,
+            resolver=self._resolver,
         )
         self._rescan_worker.progress.connect(self._on_progress)
         self._rescan_worker.finished_rescan.connect(self._on_rescan_finished)
@@ -209,6 +226,7 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool) -> None:
         self.settings_panel.scan_button.setEnabled(not busy)
+        self.settings_panel.registry_button.setEnabled(not busy)
         self.settings_panel.stop_button.setEnabled(busy)
         self.settings_panel.undo_button.setEnabled(not busy)
         self.settings_panel.rescan_button.setEnabled(not busy)
@@ -280,13 +298,21 @@ class MainWindow(QMainWindow):
         for row, _record in list(self._matched_records.items()):
             item = self._model.item_at(row)
             try:
-                refreshed = lookup_for_item(
+                resolution = self._resolver.resolve_for_item(
                     self._cache, self._client, item.extracted, genre_filter=genre_filter
                 )
             except ScrapeError:
                 continue
-            item.metadata = refreshed
-            self._matched_records[row] = refreshed
+            if not resolution.eligible:
+                item.status = MatchStatus.REVIEW_REQUIRED
+                item.note = resolution.reason
+                self._matched_records.pop(row, None)
+                item.resolution = resolution
+                item.metadata = resolution.record
+            else:
+                item.resolution = resolution
+                item.metadata = resolution.record
+                self._matched_records[row] = resolution.record
             self._model.update_row(row)
         self._log("Applied the updated genre blocklist to matched items.")
 
@@ -320,9 +346,14 @@ class MainWindow(QMainWindow):
                     self._log(f"  left alone: {duplicate}")
 
         self._match_worker = MatchWorker(
-            items, self._cache, self._client, genre_filter=self._settings.genre_filter()
+            items,
+            self._cache,
+            self._client,
+            genre_filter=self._settings.genre_filter(),
+            resolver=self._resolver,
         )
         self._match_worker.item_matched.connect(self._on_item_matched)
+        self._match_worker.item_resolved.connect(self._on_item_resolved)
         self._match_worker.item_failed.connect(self._on_item_failed)
         self._match_worker.progress.connect(self._on_progress)
         self._match_worker.finished_matching.connect(self._on_matching_finished)
@@ -334,6 +365,16 @@ class MainWindow(QMainWindow):
         item.status = MatchStatus.MATCHED
         item.metadata = record
         self._matched_records[index] = record
+        self._model.update_row(index)
+
+    def _on_item_resolved(self, index: int, resolution) -> None:
+        item = self._model.item_at(index)
+        item.resolution = resolution
+        item.metadata = resolution.record
+        if not resolution.eligible:
+            item.status = MatchStatus.REVIEW_REQUIRED
+            item.note = resolution.reason
+            self._log(f"{item.extracted.content_id}: {resolution.reason}")
         self._model.update_row(index)
 
     def _on_item_failed(self, index: int, reason: str) -> None:
@@ -350,14 +391,15 @@ class MainWindow(QMainWindow):
     def _on_matching_finished(self) -> None:
         self._set_busy(False)
         self.settings_panel.run_button.setEnabled(bool(self._matched_records))
-        self._log(f"Matched {len(self._matched_records)} item(s).")
+        review_count = sum(
+            1 for row in range(self._model.rowCount())
+            if self._model.item_at(row).status is MatchStatus.REVIEW_REQUIRED
+        )
+        self._log(f"Matched {len(self._matched_records)} item(s); {review_count} require actress review.")
 
     def _on_row_double_clicked(self, index) -> None:
         row = index.row()
         item = self._model.item_at(row)
-        if item.status == MatchStatus.MATCHED:
-            return
-
         dialog = MatchReviewDialog(
             self,
             item.primary_path.name,
@@ -365,14 +407,42 @@ class MainWindow(QMainWindow):
             self._cache,
             self._client,
             genre_filter=self._settings.genre_filter(),
+            record=item.metadata,
+            resolution=item.resolution,
+            resolver=self._resolver,
+            identity_store=self._identity_store,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_record is not None:
             item.status = MatchStatus.MATCHED
             item.metadata = dialog.result_record
+            item.resolution = dialog.result_resolution
+            item.note = None
             self._matched_records[row] = dialog.result_record
             self._model.update_row(row)
             self.settings_panel.run_button.setEnabled(True)
             self._log(f"Manually resolved {dialog.result_content_id}.")
+
+    def _start_registry_update(self) -> None:
+        if self._registry_update_worker is not None and self._registry_update_worker.isRunning():
+            return
+        self._set_busy(True)
+        self.progress_bar.setValue(0)
+        self._log("Downloading the R18.dev actress registry (this may be a large file)...")
+        self._registry_update_worker = RegistryUpdateWorker(
+            self._registry_manager, self._client, registry_download_url()
+        )
+        self._registry_update_worker.progress.connect(self._on_progress)
+        self._registry_update_worker.finished_registry.connect(self._on_registry_updated)
+        self._registry_update_worker.failed.connect(self._on_registry_update_failed)
+        self._registry_update_worker.start()
+
+    def _on_registry_updated(self, provenance) -> None:
+        self._set_busy(False)
+        self._log(f"Actress registry updated to snapshot {provenance.revision}.")
+
+    def _on_registry_update_failed(self, message: str) -> None:
+        self._set_busy(False)
+        self._log(f"Actress registry update failed: {message}")
 
     def _start_run(self) -> None:
         options = self.settings_panel.organize_options()
@@ -467,6 +537,7 @@ class MainWindow(QMainWindow):
             worker.wait(5000)
         self._save_settings()
         self._cache.close()
+        self._identity_store.close()
         self._client.close()
         detach_qt_handler(self._qt_log_handler)
         super().closeEvent(event)

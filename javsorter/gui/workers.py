@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Signal
 from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.id_extractor import extract_id
 from javsorter.core.models import MatchStatus, ScanItem
+from javsorter.core.actress_identity import ResolutionState
 from javsorter.core.scanner import scan_folder
 from javsorter.logging_setup import get_logger
 from javsorter.organize.journal import RunJournal
@@ -17,6 +18,9 @@ from javsorter.scraping.cache import MetadataCache
 from javsorter.scraping.client import ScraperClient
 from javsorter.scraping.exceptions import NoMatchError, ScrapeError
 from javsorter.scraping.lookup import lookup_for_item
+from javsorter.scraping.identity_lookup import IdentityResolver
+from javsorter.scraping.actress_registry import RegistryManager
+from javsorter.scraping.registry_download import download_and_activate
 
 logger = get_logger("workers")
 
@@ -67,6 +71,7 @@ class MatchWorker(CancellableWorker):
     """
 
     item_matched = Signal(int, object)  # row index, MetadataRecord
+    item_resolved = Signal(int, object)  # row index, IdentityResolution
     item_failed = Signal(int, str)  # row index, reason
     progress = Signal(int, int)  # done, total
     finished_matching = Signal()
@@ -77,12 +82,14 @@ class MatchWorker(CancellableWorker):
         cache: MetadataCache,
         client: ScraperClient,
         genre_filter: GenreFilter | None = None,
+        resolver: IdentityResolver | None = None,
     ):
         super().__init__()
         self._items = items
         self._cache = cache
         self._client = client
         self._genre_filter = genre_filter
+        self._resolver = resolver
 
     def run(self) -> None:
         lookupable = [
@@ -98,11 +105,22 @@ class MatchWorker(CancellableWorker):
                     break
                 content_id = item.extracted.content_id
                 try:
-                    record = lookup_for_item(
-                        self._cache, self._client, item.extracted, genre_filter=self._genre_filter
-                    )
-                    logger.info("Matched %s: %s", content_id, record.title)
-                    self.item_matched.emit(index, record)
+                    if self._resolver is None:
+                        record = lookup_for_item(
+                            self._cache, self._client, item.extracted, genre_filter=self._genre_filter
+                        )
+                        logger.info("Matched %s: %s", content_id, record.title)
+                        self.item_matched.emit(index, record)
+                    else:
+                        resolution = self._resolver.resolve_for_item(
+                            self._cache, self._client, item.extracted, genre_filter=self._genre_filter
+                        )
+                        self.item_resolved.emit(index, resolution)
+                        if resolution.eligible:
+                            logger.info("Resolved %s: %s", content_id, resolution.provenance)
+                            self.item_matched.emit(index, resolution.record)
+                        else:
+                            logger.info("Review required for %s: %s", content_id, resolution.reason)
                 except NoMatchError:
                     logger.warning("No match for %s", content_id)
                     self.item_failed.emit(index, "No match found on r18.dev")
@@ -136,6 +154,7 @@ class RescanWorker(CancellableWorker):
         client: ScraperClient,
         genre_filter: GenreFilter | None = None,
         runs_dir: Path | None = None,
+        resolver: IdentityResolver | None = None,
     ):
         super().__init__()
         self._library_root = library_root
@@ -144,6 +163,7 @@ class RescanWorker(CancellableWorker):
         self._client = client
         self._genre_filter = genre_filter
         self._runs_dir = runs_dir
+        self._resolver = resolver
 
     def run(self) -> None:
         journal = RunJournal(library_root=str(self._library_root))
@@ -171,9 +191,45 @@ class RescanWorker(CancellableWorker):
 
     def _resolve(self, content_id: str):
         extracted = extract_id(f"{content_id}.mp4")
+        if self._resolver is not None:
+            resolution = self._resolver.resolve_for_item(
+                self._cache, self._client, extracted, genre_filter=self._genre_filter
+            )
+            if not resolution.eligible:
+                raise ScrapeError(resolution.reason or "identity review required")
+            return resolution.record
         return lookup_for_item(
             self._cache, self._client, extracted, genre_filter=self._genre_filter
         )
+
+
+class RegistryUpdateWorker(CancellableWorker):
+    """Downloads/imports one local registry generation off the GUI thread."""
+
+    finished_registry = Signal(object)  # RegistryProvenance
+    failed = Signal(str)
+    progress = Signal(int, int)
+
+    def __init__(self, manager: RegistryManager, client: ScraperClient, url: str):
+        super().__init__()
+        self._manager = manager
+        self._client = client
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            result = download_and_activate(
+                self._manager,
+                self._client,
+                self._url,
+                progress=lambda done, total: self.progress.emit(done, total),
+                should_cancel=lambda: self._cancel_requested,
+            )
+        except Exception as exc:
+            logger.exception("Registry update failed")
+            self.failed.emit(str(exc))
+            return
+        self.finished_registry.emit(result)
 
 
 class ExecuteWorker(CancellableWorker):
