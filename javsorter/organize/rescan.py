@@ -32,6 +32,7 @@ class RescanReport:
     nfos_written: int = 0
     covers_downloaded: int = 0
     unmatched: list[str] = field(default_factory=list)
+    review_reasons: dict[str, str] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
 
     @property
@@ -135,10 +136,12 @@ def rescan_library(
 
         try:
             record = resolve(content_id)
-        except ScrapeError:
+        except ScrapeError as exc:
             # Leave this release and its existing links exactly as they are;
             # without metadata we can't tell a stale link from a good one.
             report.unmatched.append(content_id)
+            if str(exc):
+                report.review_reasons[content_id] = str(exc)
             known_targets.difference_update(
                 os.path.normcase(str(p.resolve())) for p in paths
             )

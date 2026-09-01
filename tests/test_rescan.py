@@ -152,6 +152,21 @@ def test_rescan_leaves_unmatched_releases_and_their_links_alone(tmp_path, client
     assert (link_dir / video.name).is_symlink()
 
 
+def test_rescan_reports_identity_review_reason_without_touching_links(tmp_path, client):
+    library, video = _make_library(tmp_path)
+    link_dir = library / "Actress" / "Someone"
+    link_dir.mkdir(parents=True)
+    os.symlink(video, link_dir / video.name)
+
+    def held(_content_id):
+        raise NoMatchError("local actress registry unavailable")
+
+    report = rescan_library(library, ALL, held, client)
+
+    assert report.review_reasons["ABC-123"] == "local actress registry unavailable"
+    assert (link_dir / video.name).is_symlink()
+
+
 def test_rescan_does_not_touch_links_pointing_outside_the_library(tmp_path, client):
     """Sort-in-place puts canonical files outside the library root; a
     rescan must not treat those links as stale.
