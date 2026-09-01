@@ -26,3 +26,18 @@ def log_dir() -> Path:
 def runs_dir() -> Path:
     """Where per-run journals live, so a run can be undone later."""
     return app_data_dir() / "runs"
+
+
+def registry_dir() -> Path:
+    """Where downloaded and imported R18.dev registry generations live."""
+    return app_data_dir() / "registry"
+
+
+def registry_pointer_path() -> Path:
+    """The small pointer naming the last completely validated generation."""
+    return registry_dir() / "active"
+
+
+def registry_download_url() -> str:
+    """Stable R18.dev endpoint for the latest public database dump."""
+    return "https://r18.dev/dumps/latest"
