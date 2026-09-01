@@ -41,3 +41,8 @@ def registry_pointer_path() -> Path:
 def registry_download_url() -> str:
     """Stable R18.dev endpoint for the latest public database dump."""
     return "https://r18.dev/dumps/latest"
+
+
+def identity_store_path() -> Path:
+    """Durable user decisions, kept separate from disposable HTTP/cache data."""
+    return app_data_dir() / "identity-decisions.sqlite3"
