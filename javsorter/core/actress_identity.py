@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
+
+from javsorter.core.models import MetadataRecord
 
 
 class DecisionKind(str, Enum):
     CORRECTION = "correction"
     FALLBACK = "fallback"
+
+
+class ResolutionState(str, Enum):
+    RESOLVED = "resolved"
+    NEEDS_REVIEW = "needs_review"
+    FALLBACK_APPROVED = "fallback_approved"
 
 
 @dataclass(frozen=True)
@@ -38,6 +46,31 @@ class ActressAliasOverride:
     aliases: tuple[str, ...] = ()
     snapshot_revision: str | None = None
     updated_at: str | None = None
+
+
+@dataclass(frozen=True)
+class IdentityResolution:
+    """Effective metadata plus the explicit run-eligibility decision."""
+
+    record: MetadataRecord
+    state: ResolutionState
+    provenance: str
+    reason: str | None = None
+    registry_revision: str | None = None
+    stable_identity_candidates: tuple[str, ...] = ()
+
+    @property
+    def eligible(self) -> bool:
+        return self.state in (ResolutionState.RESOLVED, ResolutionState.FALLBACK_APPROVED)
+
+    @property
+    def effective_record(self) -> MetadataRecord:
+        return self.record
+
+
+def with_actresses(record: MetadataRecord, actresses: list[str] | tuple[str, ...]) -> MetadataRecord:
+    """Return an overlay copy while leaving the raw metadata cache untouched."""
+    return replace(record, actresses=list(actresses))
 
 
 def canonical_release_key(content_id: str | None) -> str:
