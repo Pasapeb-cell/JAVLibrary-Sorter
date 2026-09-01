@@ -6,6 +6,8 @@ import gzip
 import hashlib
 import io
 import re
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -43,7 +45,11 @@ def download_and_activate(
             if not (final_url.lower().endswith((".gz", "/latest")) or "gzip" in content_type):
                 raise RegistryDownloadError("registry response is not a gzipped SQL dump")
             total = int(response.headers.get("Content-Length") or 0)
-            temporary = manager.root / ".download.sql.gz.tmp"
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=".download-", suffix=".sql.gz.tmp", dir=manager.root
+            )
+            os.close(fd)
+            temporary = Path(temporary_name)
             digest = hashlib.sha256()
             transferred = 0
             try:

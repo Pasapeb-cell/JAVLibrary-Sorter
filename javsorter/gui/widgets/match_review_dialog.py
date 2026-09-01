@@ -13,7 +13,13 @@ from PySide6.QtWidgets import (
 )
 
 from javsorter.config.paths import identity_store_path
-from javsorter.core.actress_identity import DecisionKind, IdentityResolution, ResolutionState, normalize_actress_names
+from javsorter.core.actress_identity import (
+    DecisionKind,
+    IdentityResolution,
+    ResolutionState,
+    canonical_release_key,
+    normalize_actress_names,
+)
 from javsorter.core.genre_filter import GenreFilter
 from javsorter.core.models import MetadataRecord
 from javsorter.scraping.cache import MetadataCache
@@ -102,6 +108,22 @@ class MatchReviewDialog(QDialog):
         if not content_id:
             QMessageBox.warning(self, "Missing ID", "Enter a content ID first.")
             return
+        # If the user changed the release ID, refresh all metadata before
+        # persisting a decision.  Keeping the old title/cover/genres under a
+        # new ID would create an internally inconsistent NFO and folder.
+        if (
+            self.result_record is not None
+            and canonical_release_key(content_id)
+            != canonical_release_key(self.result_record.content_id)
+        ):
+            if not self._lookup_content_id(content_id):
+                return
+            QMessageBox.information(
+                self,
+                "Metadata refreshed",
+                "The content ID changed, so metadata was refreshed. Review it and press Save again.",
+            )
+            return
         try:
             names = normalize_actress_names(self.actresses_edit.toPlainText().splitlines())
         except ValueError as exc:
@@ -111,7 +133,20 @@ class MatchReviewDialog(QDialog):
                 QMessageBox.warning(self, "Invalid actresses", str(exc))
                 return
 
-        if self.fallback_checkbox.isChecked() and not names:
+        fallback = self.fallback_checkbox.isChecked()
+        if fallback:
+            captured = normalize_actress_names(self.result_record.actresses)
+            if names != captured:
+                QMessageBox.warning(
+                    self,
+                    "Fallback must match R18",
+                    "An explicit fallback must preserve the captured R18 actress list. "
+                    "Uncheck fallback to save an edited correction.",
+                )
+                self.fallback_checkbox.setChecked(False)
+                return
+
+        if fallback and not names:
             confirmation = QMessageBox.question(
                 self,
                 "Approve empty actress list?",
@@ -125,20 +160,36 @@ class MatchReviewDialog(QDialog):
         if self._identity_store is None:
             self._identity_store = IdentityDecisionStore(identity_store_path())
         try:
-            kind = DecisionKind.FALLBACK if self.fallback_checkbox.isChecked() else DecisionKind.CORRECTION
-            saved = self._identity_store.save_release_decision(
-                content_id,
-                kind=kind,
-                actresses=names,
-                captured_r18_actresses=self.result_record.actresses,
-            )
-            if (
+            kind = DecisionKind.FALLBACK if fallback else DecisionKind.CORRECTION
+            reuse = (
                 kind is DecisionKind.CORRECTION
                 and self.reuse_identity_checkbox.isChecked()
                 and self.result_resolution is not None
-            ):
-                for stable_id, name in zip(self.result_resolution.stable_identity_candidates, names):
-                    self._identity_store.save_alias_override(stable_id, name, snapshot_revision=saved.snapshot_revision)
+            )
+            stable_ids = self.result_resolution.stable_identity_candidates if reuse and self.result_resolution else ()
+            if reuse and len(stable_ids) != len(names):
+                QMessageBox.warning(
+                    self,
+                    "Identity reuse unavailable",
+                    "Keep the actress count and order unchanged when reusing registry identities.",
+                )
+                return
+            if reuse:
+                saved = self._identity_store.save_release_decision_with_aliases(
+                    content_id,
+                    kind=kind,
+                    actresses=names,
+                    stable_ids=stable_ids,
+                    captured_r18_actresses=self.result_record.actresses,
+                    alias_overrides=list(zip(stable_ids, names)),
+                )
+            else:
+                saved = self._identity_store.save_release_decision(
+                    content_id,
+                    kind=kind,
+                    actresses=names,
+                    captured_r18_actresses=self.result_record.actresses,
+                )
         except (DecisionStoreUnavailable, OSError, ValueError) as exc:
             QMessageBox.critical(self, "Can't save decision", str(exc))
             return
@@ -170,12 +221,24 @@ class MatchReviewDialog(QDialog):
         if not content_id:
             QMessageBox.warning(self, "Missing ID", "Enter a content ID first.")
             return
+        self._lookup_content_id(content_id)
+
+    def _lookup_content_id(self, content_id: str) -> bool:
         try:
             record = lookup_metadata(self._cache, self._client, content_id)
+            resolution = (
+                self._resolver.resolve(record, release_id=content_id, genre_filter=self._genre_filter)
+                if self._resolver is not None
+                else None
+            )
         except NoMatchError:
             QMessageBox.warning(self, "No match", f"No metadata found for {content_id} on r18.dev.")
-            return
+            return False
         except NetworkError as exc:
             QMessageBox.critical(self, "Network error", str(exc))
-            return
-        self._set_record(record, None)
+            return False
+        except DecisionStoreUnavailable as exc:
+            QMessageBox.critical(self, "Decision store unavailable", str(exc))
+            return False
+        self._set_record(resolution.record if resolution is not None else record, resolution)
+        return True

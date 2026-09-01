@@ -32,6 +32,13 @@ def test_fallback_can_explicitly_preserve_empty_list(tmp_path):
     store.close()
 
 
+def test_correction_cannot_be_saved_without_an_actress(tmp_path):
+    store = IdentityDecisionStore(tmp_path / "decisions.sqlite3")
+    with pytest.raises(ValueError):
+        store.save_release_decision("ABC-1", kind=DecisionKind.CORRECTION, actresses=[])
+    store.close()
+
+
 def test_alias_override_is_separate_from_release_decision(tmp_path):
     store = IdentityDecisionStore(tmp_path / "decisions.sqlite3")
     alias = store.save_alias_override("a1", "Alice Example", ["A. Example"])

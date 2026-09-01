@@ -167,6 +167,23 @@ def test_rescan_reports_identity_review_reason_without_touching_links(tmp_path, 
     assert (link_dir / video.name).is_symlink()
 
 
+def test_rescan_keeps_broken_links_for_held_release(tmp_path, client):
+    library, video = _make_library(tmp_path)
+    link_dir = library / "Actress" / "Someone"
+    link_dir.mkdir(parents=True)
+    link = link_dir / video.name
+    os.symlink(video.with_name("missing.mp4"), link)
+
+    def held(_content_id):
+        raise NoMatchError("identity review required")
+
+    report = rescan_library(library, ALL, held, client)
+
+    assert report.review_reasons["ABC-123"] == "identity review required"
+    assert link.is_symlink()
+    assert report.broken_links_removed == 0
+
+
 def test_rescan_does_not_touch_links_pointing_outside_the_library(tmp_path, client):
     """Sort-in-place puts canonical files outside the library root; a
     rescan must not treat those links as stale.

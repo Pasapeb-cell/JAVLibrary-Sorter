@@ -64,7 +64,10 @@ class IdentityResolver:
             if index is None:
                 return self._held(record, "local actress registry unavailable", None, genre_filter)
             try:
-                registry_match = index.lookup(release_id or record.content_id)
+                # Registry evidence is keyed to the same base release ID as
+                # R18/cache lookups.  In particular, ``-C`` uncensored files
+                # must reuse the ``ABC-1`` registry entry.
+                registry_match = index.lookup(release_key)
             finally:
                 index.close()
 

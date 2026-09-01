@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 )
 
 from javsorter.config.paths import cache_path as default_cache_path
-from javsorter.config.paths import identity_store_path as default_identity_store_path
 from javsorter.config.paths import log_dir as default_log_dir
 from javsorter.config.paths import registry_dir as default_registry_dir
 from javsorter.config.paths import registry_download_url
@@ -72,8 +71,13 @@ class MainWindow(QMainWindow):
 
         self._client = ScraperClient()
         self._cache = MetadataCache(cache_path or default_cache_path())
-        self._identity_store = IdentityDecisionStore(identity_store_path or default_identity_store_path())
-        registry_root = registry_root or default_registry_dir()
+        data_anchor = cache_path or default_cache_path()
+        self._identity_store = IdentityDecisionStore(
+            identity_store_path or data_anchor.with_name("identity-decisions.sqlite3")
+        )
+        registry_root = registry_root or (
+            data_anchor.parent / "registry" if cache_path is not None else default_registry_dir()
+        )
         self._registry_manager = RegistryManager(registry_root, registry_root / "active")
         self._resolver = IdentityResolver(self._identity_store, self._registry_manager)
         self._model = ScanTableModel()
@@ -229,9 +233,11 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool) -> None:
         self.settings_panel.scan_button.setEnabled(not busy)
         self.settings_panel.registry_button.setEnabled(not busy)
+        self.settings_panel.blocked_genres_button.setEnabled(not busy)
         self.settings_panel.stop_button.setEnabled(busy)
         self.settings_panel.undo_button.setEnabled(not busy)
         self.settings_panel.rescan_button.setEnabled(not busy)
+        self.table_view.setEnabled(not busy)
         if busy:
             self.settings_panel.run_button.setEnabled(False)
 
@@ -537,6 +543,14 @@ class MainWindow(QMainWindow):
         if worker is not None:
             worker.request_cancel()
             worker.wait(5000)
+            if worker.isRunning():
+                # Shared cache, decision store, and HTTP session are owned by
+                # the window.  Never close them while a worker can still be
+                # using them; the user can close again once cancellation has
+                # completed.
+                self._log("Waiting for the active worker to stop before closing...")
+                event.ignore()
+                return
         self._save_settings()
         self._cache.close()
         self._identity_store.close()

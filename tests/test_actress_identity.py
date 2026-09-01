@@ -28,6 +28,13 @@ def test_registry_repairs_missing_r18_cast(tmp_path):
     assert result.record.actresses == ["Alice Example", "Bob Example"]
 
 
+def test_uncensored_release_uses_base_registry_entry(tmp_path):
+    resolver = _resolver(tmp_path)
+    result = resolver.resolve(MetadataRecord("ABC-1", "Title", []), release_id="ABC-1-C")
+    assert result.state is ResolutionState.RESOLVED
+    assert result.record.actresses == ["Alice Example", "Bob Example"]
+
+
 def test_manual_correction_wins_over_registry(tmp_path):
     resolver = _resolver(tmp_path)
     resolver.decision_store.save_release_decision("ABC-1", kind=DecisionKind.CORRECTION, actresses=["Manual Name"])

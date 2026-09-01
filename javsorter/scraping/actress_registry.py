@@ -13,8 +13,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
+import tempfile
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -187,6 +189,7 @@ CREATE TABLE entries (
     dvd_id_norm TEXT NOT NULL,
     signature TEXT NOT NULL,
     revision TEXT NOT NULL,
+    cast_complete INTEGER NOT NULL DEFAULT 1,
     UNIQUE(content_id, signature)
 );
 CREATE TABLE entry_actresses (
@@ -238,13 +241,20 @@ class RegistryIndex:
             if self._conn is None:
                 raise RegistryUnavailableError("registry generation is closed")
             rows = self._conn.execute(
-                "SELECT DISTINCT entry_id FROM entries WHERE content_id = ? OR dvd_id_norm = ?",
+                "SELECT DISTINCT entry_id, cast_complete FROM entries WHERE content_id = ? OR dvd_id_norm = ?",
                 (normalized_content, normalized_display),
             ).fetchall()
             if not rows:
                 return RegistryMatch(RegistryState.NO_ENTRY, requested_id, snapshot_revision=self.revision)
             candidate_sets: list[tuple[ActressIdentity, ...]] = []
-            for (entry_id,) in rows:
+            for entry_id, cast_complete in rows:
+                if not cast_complete:
+                    return RegistryMatch(
+                        RegistryState.AMBIGUOUS,
+                        requested_id,
+                        snapshot_revision=self.revision,
+                        reason="registry entry has an unresolved actress relation",
+                    )
                 actress_rows = self._conn.execute(
                     "SELECT stable_id, canonical_name, aliases_json FROM entry_actresses "
                     "WHERE entry_id = ? ORDER BY ordinal",
@@ -320,11 +330,33 @@ class RegistryManager:
         should_cancel: Callable[[], bool] | None = None,
     ) -> RegistryProvenance:
         """Build and atomically activate one generation from a COPY stream."""
-        revision = _safe_revision(revision)
-        candidate = self._generation_path(revision).with_suffix(".sqlite3.tmp")
-        final = self._generation_path(revision)
+        requested_revision = _safe_revision(revision)
         with self._write_lock:
-            candidate.unlink(missing_ok=True)
+            revision = requested_revision
+            final = self._generation_path(revision)
+            while final.exists():
+                existing_digest = _generation_digest(final)
+                if source_digest and existing_digest == source_digest:
+                    _atomic_write_text(self.pointer_path, revision)
+                    return RegistryProvenance(revision, source_url, source_digest, imported_at)
+                if not source_digest:
+                    raise ValueError(
+                        f"refusing to replace existing registry generation {revision} without a source digest"
+                    )
+                revision = f"{requested_revision}-{source_digest[:16]}"
+                final = self._generation_path(revision)
+                if final.exists() and _generation_digest(final) == source_digest:
+                    _atomic_write_text(self.pointer_path, revision)
+                    return RegistryProvenance(revision, source_url, source_digest, imported_at)
+                if final.exists():
+                    revision = f"{requested_revision}-{source_digest[:16]}-2"
+                    final = self._generation_path(revision)
+            fd, candidate_name = tempfile.mkstemp(
+                prefix=".generation-", suffix=".sqlite3.tmp", dir=self.root
+            )
+            os.close(fd)
+            Path(candidate_name).unlink(missing_ok=True)
+            candidate = Path(candidate_name)
             conn: sqlite3.Connection | None = None
             try:
                 conn = sqlite3.connect(candidate)
@@ -378,12 +410,19 @@ class RegistryManager:
                 conn.execute("INSERT INTO metadata VALUES ('source_digest', ?)", (source_digest or "",))
                 conn.execute("INSERT INTO metadata VALUES ('imported_at', ?)", (imported_at or "",))
                 _materialize_entries(conn, revision)
-                if conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == 0:
+                if conn.execute("SELECT COUNT(*) FROM entries WHERE cast_complete = 0").fetchone()[0]:
+                    raise ValueError("registry dump contains unresolved actress relations")
+                if conn.execute("SELECT COUNT(*) FROM entries WHERE cast_complete = 1").fetchone()[0] == 0:
                     raise ValueError("registry dump contained no video entries")
+                if should_cancel and should_cancel():
+                    raise InterruptedError("registry import cancelled")
+                conn.execute("PRAGMA foreign_keys = ON")
                 conn.commit()
                 conn.close()
                 conn = None
-                final.unlink(missing_ok=True)
+                if should_cancel and should_cancel():
+                    raise InterruptedError("registry import cancelled")
+                _validate_candidate(candidate, revision)
                 candidate.replace(final)
                 _atomic_write_text(self.pointer_path, revision)
                 return RegistryProvenance(revision, source_url, source_digest, imported_at)
@@ -410,17 +449,19 @@ def _materialize_entries(conn: sqlite3.Connection, revision: str) -> None:
             (content_id,),
         ).fetchall()
         identities: list[tuple[str, str, tuple[str, ...]]] = []
+        cast_complete = bool(actress_rows)
         for stable_id, _ordinal, romaji, kanji, kana in actress_rows:
             names = tuple(dict.fromkeys(name.strip() for name in (romaji, kanji, kana) if name and name.strip()))
             if not names:
+                cast_complete = False
                 continue
             identities.append((stable_id, names[0], names[1:]))
         signature = hashlib.sha256(
             json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         conn.execute(
-            "INSERT OR IGNORE INTO entries(content_id, dvd_id_norm, signature, revision) VALUES (?, ?, ?, ?)",
-            (content_id, dvd_id_norm or "", signature, revision),
+            "INSERT OR IGNORE INTO entries(content_id, dvd_id_norm, signature, revision, cast_complete) VALUES (?, ?, ?, ?, ?)",
+            (content_id, dvd_id_norm or "", signature, revision, int(cast_complete)),
         )
         entry_id = conn.execute(
             "SELECT entry_id FROM entries WHERE content_id = ? AND signature = ?",
@@ -460,3 +501,39 @@ def _atomic_write_text(path: Path, value: str) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(value + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def _generation_digest(path: Path) -> str | None:
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        row = conn.execute("SELECT value FROM metadata WHERE key = 'source_digest'").fetchone()
+        return row[0] or None if row else None
+    except (OSError, sqlite3.DatabaseError):
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _validate_candidate(path: Path, revision: str) -> None:
+    """Reopen a staged generation and verify it before publishing the pointer."""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        integrity = conn.execute("PRAGMA integrity_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise ValueError("registry generation failed SQLite integrity check")
+        foreign_keys = conn.execute("PRAGMA foreign_key_check").fetchone()
+        if foreign_keys is not None:
+            raise ValueError("registry generation has broken references")
+        stored = conn.execute("SELECT value FROM metadata WHERE key = 'revision'").fetchone()
+        if not stored or stored[0] != revision:
+            raise ValueError("registry generation revision metadata is inconsistent")
+        if conn.execute("SELECT COUNT(*) FROM entries WHERE cast_complete = 1").fetchone()[0] == 0:
+            raise ValueError("registry generation has no complete entries")
+    except (OSError, sqlite3.DatabaseError) as exc:
+        raise ValueError("registry generation could not be validated") from exc
+    finally:
+        if conn is not None:
+            conn.close()
