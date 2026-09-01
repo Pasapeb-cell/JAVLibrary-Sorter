@@ -12,7 +12,9 @@ that metadata — with Kodi/Jellyfin/Plex-compatible `.nfo` files and cover art.
    (`MIDV-751-C_GG5`), and quality tags (`MIST-435.1080p`).
 3. **Looks up metadata** (title, actresses, genres, studio, release date, cover art)
    from [r18.dev](https://r18.dev)'s JSON API, with a local SQLite cache so repeat
-   scans don't re-fetch.
+   scans don't re-fetch. Actress identities are then checked against an optional
+   local R18.dev registry snapshot so missing or inconsistent names do not create
+   accidental `Unknown` folders.
 4. **Moves** the file into its folder and renames it to the clean ID.
 5. **Writes an `.nfo`** and downloads cover art alongside the video.
 
@@ -103,7 +105,26 @@ folder, or into a folder you pick), choose the layout and the tag to sort by, th
 **Scan** → review the table → **Run**.
 
 Rows that don't resolve automatically (no ID parsed, an ambiguous `-C` marker, or no
-match) can be **double-clicked** to correct the ID and look it up again.
+match) can be **double-clicked** to correct the ID and review actresses. Matched rows
+can also be opened to edit the ordered actress list. Saving a correction persists it
+for that release; when a stable registry identity is available it can be reused for
+later releases. Rows held because registry evidence is missing or ambiguous remain
+ineligible until corrected or explicitly approved as an R18 fallback.
+
+### Actress registry recovery
+
+Use **Update actress registry** before a scan when you want automatic recovery. The
+free weekly R18.dev dump is downloaded and imported in the background (the archive is
+large; progress and cancellation are shown). A failed or cancelled update leaves the
+last validated snapshot active. Snapshot generations and user decisions live under
+`%APPDATA%\JAVSorter\registry\` and `%APPDATA%\JAVSorter\identity-decisions.sqlite3`.
+
+The resolver never guesses from fuzzy name similarity: exact content-ID evidence is
+applied automatically, while conflicts, unavailable snapshots, and malformed data
+are shown as **Review required**. An explicit fallback records the exact R18 actress
+list (including an intentional empty list) and can be replaced later by a correction.
+The registry is a local, no-cost secondary source; the application does not automate
+Cloudflare-protected javlibrary.com requests or require an API key.
 
 **Stop** halts a scan or run after the item in progress finishes.
 
@@ -180,16 +201,27 @@ machine for category-folder links.
 .venv\Scripts\python -m pytest -m live  # hits the real r18.dev API; run sparingly
 ```
 
-The offline suite never touches the network: the scraper is tested against committed
-JSON fixtures in `tests/fixtures/json/`, which double as the regression guard if
-r18.dev's schema changes.
+The offline suite never touches the network: the scraper and registry importer are
+tested against committed JSON/SQL fixtures in `tests/fixtures/`. The optional live
+checks are explicit diagnostics only. To verify recovery for your library, set the
+known-bad ID and the expected ordered names from your JavLibrary comparison, then run
+the registry diagnostic (it downloads the large weekly dump):
+
+```powershell
+$env:JAVSORTER_LIVE_BAD_ID = "ABC-123"
+$env:JAVSORTER_LIVE_EXPECTED_ACTRESSES = "Correct Name 1|Correct Name 2"
+.venv\Scripts\python -m pytest -m live tests/test_live_registry.py
+```
+
+The diagnostic compares the live R18 list with the dump result before the organizer
+is allowed to use it.
 
 ### Layout
 
 | Package | Responsibility |
 | --- | --- |
 | `javsorter/core/` | Filename → content ID extraction, folder scanning, multi-part grouping |
-| `javsorter/scraping/` | Rate-limited HTTP client, r18.dev lookup, JSON parsing, SQLite cache |
+| `javsorter/scraping/` | Rate-limited HTTP client, r18.dev lookup, registry download/index, JSON parsing, SQLite cache and decisions |
 | `javsorter/organize/` | Move/rename, NFO writing, cover download, symlinks, run journal, pipeline |
 | `javsorter/gui/` | PySide6 window, background workers, dialogs |
 | `javsorter/config/` | JSON settings persistence in `%APPDATA%\JAVSorter\` |

@@ -32,6 +32,7 @@ class RescanReport:
     nfos_written: int = 0
     covers_downloaded: int = 0
     unmatched: list[str] = field(default_factory=list)
+    review_reasons: dict[str, str] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
 
     @property
@@ -124,6 +125,8 @@ def rescan_library(
     # lowercase folder names on Windows.
     expected_links: dict[str, tuple[Path, Path]] = {}
     known_targets: set[str] = set()
+    protected_targets: set[str] = set()
+    protected_link_names: set[str] = set()
 
     for done, (content_id, paths) in enumerate(sorted(groups.items()), start=1):
         if should_cancel is not None and should_cancel():
@@ -135,13 +138,14 @@ def rescan_library(
 
         try:
             record = resolve(content_id)
-        except ScrapeError:
+        except ScrapeError as exc:
             # Leave this release and its existing links exactly as they are;
             # without metadata we can't tell a stale link from a good one.
             report.unmatched.append(content_id)
-            known_targets.difference_update(
-                os.path.normcase(str(p.resolve())) for p in paths
-            )
+            if str(exc):
+                report.review_reasons[content_id] = str(exc)
+            protected_targets.update(os.path.normcase(str(p.resolve())) for p in paths)
+            protected_link_names.update(p.name.casefold() for p in paths)
             if progress is not None:
                 progress(done, total)
             continue
@@ -161,7 +165,15 @@ def rescan_library(
         if progress is not None:
             progress(done, total)
 
-    _prune_links(library_root, expected_links, known_targets, journal, report)
+    _prune_links(
+        library_root,
+        expected_links,
+        known_targets,
+        protected_targets,
+        protected_link_names,
+        journal,
+        report,
+    )
     _create_missing_links(expected_links, journal, report)
     _remove_empty_category_dirs(library_root)
 
@@ -197,12 +209,16 @@ def _prune_links(
     library_root: Path,
     expected_links: dict[str, tuple[Path, Path]],
     known_targets: set[str],
+    protected_targets: set[str],
+    protected_link_names: set[str],
     journal: RunJournal | None,
     report: RescanReport,
 ) -> None:
     for link in find_category_links(library_root):
         key = os.path.normcase(str(link))
         if key in expected_links:
+            continue
+        if link.name.casefold() in protected_link_names:
             continue
 
         try:
@@ -211,6 +227,8 @@ def _prune_links(
             target = ""
 
         if _link_is_broken(link):
+            if _resolved_link_target(link) in protected_targets:
+                continue
             _remove_link(link, target, journal, report)
             report.broken_links_removed += 1
             continue
@@ -219,6 +237,8 @@ def _prune_links(
         # we actually rescanned -- anything else was put there by something
         # we don't know about, so leave it alone.
         resolved = os.path.normcase(str(Path(link).resolve()))
+        if resolved in protected_targets:
+            continue
         if resolved in known_targets:
             _remove_link(link, target, journal, report)
             report.stale_links_removed += 1
@@ -250,6 +270,15 @@ def _create_missing_links(
                 journal.record_created_link(link_path)
         else:
             report.failures.append(f"{link_path}: {result.reason}")
+
+
+def _resolved_link_target(link: Path) -> str:
+    """Resolve a symlink target even when the target itself no longer exists."""
+    try:
+        raw = os.readlink(link)
+        return os.path.normcase(str((link.parent / raw).resolve(strict=False)))
+    except OSError:
+        return ""
 
 
 def _remove_empty_category_dirs(library_root: Path) -> None:

@@ -59,8 +59,20 @@ def lookup_for_item(
     uncensored file is still named "ABC-123-C" and stays distinguishable
     from the censored release on disk.
     """
+    record = lookup_for_item_raw(cache, client, extracted)
+    if genre_filter is not None:
+        record = genre_filter.apply(record)
+    return record
+
+
+def lookup_for_item_raw(
+    cache: MetadataCache,
+    client: ScraperClient,
+    extracted: ExtractedId,
+) -> MetadataRecord:
+    """Return unfiltered R18 data for the identity coordinator."""
     lookup_id = extracted.base_id or extracted.content_id
-    record = lookup_metadata(cache, client, lookup_id, genre_filter=genre_filter)
+    record = lookup_metadata(cache, client, lookup_id)
     if extracted.content_id and record.content_id != extracted.content_id:
         record = replace(record, content_id=extracted.content_id)
     return record

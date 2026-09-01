@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from javsorter.core.actress_identity import IdentityResolution
 
 
 class MatchStatus(Enum):
@@ -12,6 +16,7 @@ class MatchStatus(Enum):
     MATCHED = auto()
     MULTIPLE_CANDIDATES = auto()
     NO_MATCH = auto()
+    REVIEW_REQUIRED = auto()
     ERROR = auto()
 
 
@@ -65,6 +70,9 @@ class ScanItem:
     duplicates: list[Path] = field(default_factory=list)
     metadata: MetadataRecord | None = None
     note: str | None = None
+    # Identity resolution is kept alongside (not folded into) filename match
+    # status so review-required rows can be displayed and edited safely.
+    resolution: IdentityResolution | None = None
 
     @property
     def primary_path(self) -> Path:

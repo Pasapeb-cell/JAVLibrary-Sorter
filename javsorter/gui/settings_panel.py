@@ -74,6 +74,10 @@ class SettingsPanel(QWidget):
             "with shortcuts. Never moves or deletes videos."
         )
         self.undo_button = QPushButton("Undo last run")
+        self.registry_button = QPushButton("Update actress registry")
+        self.registry_button.setToolTip(
+            "Download the free R18.dev snapshot used to repair missing or inconsistent actress names."
+        )
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._folder_row("Source folder:", self.source_edit))
@@ -121,6 +125,7 @@ class SettingsPanel(QWidget):
         button_row.addWidget(self.scan_button)
         button_row.addWidget(self.run_button)
         button_row.addWidget(self.stop_button)
+        button_row.addWidget(self.registry_button)
         button_row.addStretch()
         button_row.addWidget(self.rescan_button)
         button_row.addWidget(self.undo_button)

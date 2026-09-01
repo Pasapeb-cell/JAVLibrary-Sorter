@@ -2,6 +2,6 @@
 pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
-    "live: hits the real javlibrary.com site; excluded from default runs",
+    "live: hits a real metadata or registry endpoint; excluded from default runs",
 ]
 addopts = "-m \"not live\""

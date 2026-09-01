@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 import time
+from contextlib import contextmanager
+from collections.abc import Iterator
 
 import requests
 
@@ -71,6 +73,34 @@ class ScraperClient:
                     self._rate_limiter.wait()
 
         raise NetworkError(f"{url}: {last_error}") from last_error
+
+    @contextmanager
+    def get_stream(self, url: str, timeout: float = 60.0) -> Iterator[requests.Response]:
+        """Yield a streamed response using the same rate limit and retries.
+
+        Registry dumps are hundreds of megabytes compressed.  Keeping this
+        separate from :meth:`get` prevents callers from accidentally buffering
+        the archive in memory while still sharing the application's HTTP
+        session and retry policy.
+        """
+        self._rate_limiter.wait()
+        last_error: Exception | None = None
+        response: requests.Response | None = None
+        for attempt in range(self._max_attempts):
+            try:
+                response = self._session.get(url, timeout=timeout, stream=True)
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt + 1 < self._max_attempts:
+                    time.sleep(self._retry_backoff * (2**attempt))
+                    self._rate_limiter.wait()
+        if response is None:
+            raise NetworkError(f"{url}: {last_error}") from last_error
+        try:
+            yield response
+        finally:
+            response.close()
 
     def close(self) -> None:
         self._session.close()
